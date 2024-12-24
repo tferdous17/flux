@@ -10,9 +10,9 @@ The record also has an associated timestamp. If the user did not provide a times
 
 
  */
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Objects;
 import java.util.Optional;
 public class ProducerRecord<K, V>{
 
@@ -30,7 +30,7 @@ public class ProducerRecord<K, V>{
         this.value = Optional.ofNullable(value);
     }
 
-    // TODO No Header class.
+    // TODO: No Header class.
     public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value, Iterable<Header> headers) {
         this.topic = topic;
         this.timestamp = timestamp;
@@ -52,7 +52,7 @@ public class ProducerRecord<K, V>{
         this.value = Optional.ofNullable(value);
     }
 
-    // TODO No Header class.
+    // TODO: No Header class.
     public ProducerRecord(String topic, Integer partition, K key, V value, Iterable<Header> headers) {
         this.topic = topic;
         this.timestamp = LocalDateTime.now()
@@ -84,5 +84,55 @@ public class ProducerRecord<K, V>{
         this.value = Optional.ofNullable(value);
     }
 
-    // INSERT METHODS BELOW.
+    // METHODS
+    // TODO: Insert get headers.
+
+    public K getKey() {
+        return key.orElse(null);
+    }
+
+    public IntegergetPartitionNumber() {
+        return partitionNumber.orElse(null);
+    }
+
+    public Long getTimestamp() {
+        return timestamp;
+    }
+
+    public String getTopic() {
+        return topic;
+    }
+
+    public V getValue() {
+        return value.orElse(null);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ProducerRecord<?, ?> that = (ProducerRecord<?, ?>) o;
+        return Objects.equals(topic, that.topic) &&
+                Objects.equals(timestamp, that.timestamp) &&
+                Objects.equals(partitionNumber, that.partitionNumber) &&
+                Objects.equals(key, that.key) &&
+                Objects.equals(value, that.value);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(topic, timestamp, partitionNumber, key, value);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder stringBuffer = new StringBuilder();
+        stringBuffer
+                .append("Topic: ").append(getTopic()).append("\n")
+                .append("Timestamp: ").append(getTimestamp()).append("\n")
+                .append("PartitionNumber: ").append(getPartitionNumber()).append("\n")
+                .append("Key: ").append(getKey()).append("\n")
+                .append("Value: ").append(getValue());
+        return stringBuffer.toString();
+    }
 }
