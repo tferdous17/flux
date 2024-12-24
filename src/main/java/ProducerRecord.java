@@ -12,15 +12,15 @@ The record also has an associated timestamp. If the user did not provide a times
  */
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.Objects;
-import java.util.Optional;
-public class ProducerRecord<K, V>{
+import java.util.*;
 
+public class ProducerRecord<K, V> {
     private String topic;
     private Long timestamp;
-    private Optional<Integer> partitionNumber;
-    private Optional<K> key;
-    private Optional<V> value;
+    private Optional<Integer> partitionNumber = Optional.empty();
+    private Optional<K> key = Optional.empty();
+    private Optional<V> value = Optional.empty();
+     private Iterable<Header> headers;
 
     public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value) {
         this.topic = topic;
@@ -30,14 +30,20 @@ public class ProducerRecord<K, V>{
         this.value = Optional.ofNullable(value);
     }
 
-    // TODO: No Header class.
     public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value, Iterable<Header> headers) {
         this.topic = topic;
         this.timestamp = timestamp;
         this.partitionNumber = Optional.ofNullable(partition);
         this.key = Optional.ofNullable(key);
         this.value = Optional.ofNullable(value);
-        // INSERT HEADER
+
+        if (headers != null) {
+            List<Header> headerList = new ArrayList<>();
+            headers.forEach(headerList::add);
+            this.headers = Collections.unmodifiableList(headerList);
+        } else {
+            this.headers = Collections.emptyList();
+        }
 
     }
 
@@ -52,7 +58,6 @@ public class ProducerRecord<K, V>{
         this.value = Optional.ofNullable(value);
     }
 
-    // TODO: No Header class.
     public ProducerRecord(String topic, Integer partition, K key, V value, Iterable<Header> headers) {
         this.topic = topic;
         this.timestamp = LocalDateTime.now()
@@ -62,7 +67,13 @@ public class ProducerRecord<K, V>{
         this.partitionNumber = Optional.ofNullable(partition);
         this.key = Optional.ofNullable(key);
         this.value = Optional.ofNullable(value);
-        // INSERT HEADER
+        if (headers != null) {
+            List<Header> headerList = new ArrayList<>();
+            headers.forEach(headerList::add);
+            this.headers = Collections.unmodifiableList(headerList);
+        } else {
+            this.headers = Collections.emptyList();
+        }
     }
 
     public ProducerRecord(String topic, K key, V value) {
@@ -85,13 +96,17 @@ public class ProducerRecord<K, V>{
     }
 
     // METHODS
-    // TODO: Insert get headers.
+    public String getTopic() {
+        return topic;
+    }
+
+    //TODO: Add Headers class.
 
     public K getKey() {
         return key.orElse(null);
     }
 
-    public IntegergetPartitionNumber() {
+    public Integer getPartitionNumber() {
         return partitionNumber.orElse(null);
     }
 
@@ -99,9 +114,6 @@ public class ProducerRecord<K, V>{
         return timestamp;
     }
 
-    public String getTopic() {
-        return topic;
-    }
 
     public V getValue() {
         return value.orElse(null);
@@ -128,7 +140,7 @@ public class ProducerRecord<K, V>{
     public String toString() {
         StringBuilder stringBuffer = new StringBuilder();
         stringBuffer
-                .append("Topic: ").append(getTopic()).append("\n")
+                .append("Topic: ").append(String.valueOf(getTopic())).append("\n")
                 .append("Timestamp: ").append(getTimestamp()).append("\n")
                 .append("PartitionNumber: ").append(getPartitionNumber()).append("\n")
                 .append("Key: ").append(getKey()).append("\n")
