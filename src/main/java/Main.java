@@ -1,3 +1,6 @@
+import commons.header.Header;
+import producer.ProducerRecord;
+
 import java.util.ArrayList;
 import java.util.List;
 
