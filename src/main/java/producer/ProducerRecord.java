@@ -85,6 +85,9 @@ public class ProducerRecord<K, V> {
                 .toInstant()
                 .toEpochMilli();
         this.key = Optional.ofNullable(key);
+        if (this.key.isPresent()) {
+            this.partitionNumber = Optional.of(Math.abs(key.hashCode()));
+        }
     }
 
     public ProducerRecord(String topic, V value) {
@@ -94,6 +97,8 @@ public class ProducerRecord<K, V> {
                 .atZone(ZoneId.systemDefault())
                 .toInstant()
                 .toEpochMilli();
+        // TODO: Round Robin Implementation for partition number below;
+        this.partitionNumber = Optional.empty();
     }
 
     // METHODS
