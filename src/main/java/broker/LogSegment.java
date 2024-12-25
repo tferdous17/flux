@@ -51,4 +51,27 @@ public class LogSegment {
         return true;
     }
 
+    public boolean isActive() {
+        return isActive;
+    }
+
+    public int getPartitionNumber() {
+        return partitionNumber;
+    }
+
+    public long getSegmentThresholdInBytes() {
+        return segmentThresholdInBytes;
+    }
+
+    public long getCurrentSizeInBytes() {
+        return currentSizeInBytes;
+    }
+
+    public int getStartOffset() {
+        return startOffset;
+    }
+
+    public int getEndOffset() {
+        return endOffset;
+    }
 }
