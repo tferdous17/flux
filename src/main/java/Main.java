@@ -1,8 +1,11 @@
 import commons.header.Header;
+import commons.header.Properties;
 import producer.ProducerRecord;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Main {
     public static void producerRecordTest(){
@@ -41,6 +44,33 @@ public class Main {
         System.out.println("TEST 6");
         System.out.println(test6 + "\n");
 
+        System.out.println("Properties class main testing ");
+
+        Map<String, String> initialProperties = new HashMap<>();
+        initialProperties.put("retries", "3");
+        initialProperties.put("timeout", "5000");
+
+        Properties producerProperties = new Properties(initialProperties);
+
+        producerProperties.setProperty("yo mama", "max");
+
+        System.out.println("Retries: " + producerProperties.getProperty("retries"));
+        System.out.println("Timeout: " + producerProperties.getProperty("timeout"));
+
+        // Handling the case where 'acknowledgment' does not exist
+        String acknowledgment = producerProperties.getProperty("acknowledgment");
+        if (acknowledgment != null) {
+            System.out.println("Acknowledgment: " + acknowledgment);
+        } else {
+            System.out.println("Acknowledgment: Not set");
+        }
+
+        System.out.println("Contains 'retries': " + producerProperties.containsKey("retries"));
+
+        producerProperties.removeProperty("timeout");
+        System.out.println("Contains 'timeout': " + producerProperties.containsKey("timeout"));
+
+        System.out.println("All Properties: " + producerProperties);
     }
 
     public static void main(String[] args) {

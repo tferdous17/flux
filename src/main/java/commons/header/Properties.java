@@ -14,12 +14,32 @@ public class Properties {
     public Properties(Map<String, String> properties) {
         this.properties = new HashMap<>(properties);
     }
+
     public void setProperty(String key, String value) {
         properties.put(key, value);
     }
+
     public String getProperty(String key) {
         return properties.get(key);
 
+    }
+    public void removeProperty(String key) {
+        properties.remove(key);
+    }
+
+    public boolean containsKey(String key) {
+        return properties.containsKey(key);
+    }
+    // Method to get all properties and returns without exposing the internal map
+    public Map<String, String> getAllProperties() {
+        return new HashMap<>(properties);
+    }
+
+    @Override
+    public String toString() {
+        return "Properties{" +
+                "properties=" + properties +
+                '}';
     }
 
 }
