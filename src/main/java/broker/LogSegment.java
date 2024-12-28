@@ -6,6 +6,11 @@ import producer.ProducerRecord;
 import java.io.File;
 import java.io.IOException;
 
+/**
+ * A LogSegment is a component/storage unit that makes up a Flux Partition.
+ * Each segment holds a certain amount of records in sequential manner, typically in the form of batches.
+ * Upon reaching the defined byte threshold, a segment will automatically become immutable.
+ */
 public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
