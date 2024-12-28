@@ -1,6 +1,7 @@
 package broker;
 
 import org.tinylog.Logger;
+import producer.ProducerRecord;
 
 import java.io.File;
 import java.io.IOException;
@@ -26,7 +27,7 @@ public class LogSegment {
             } else {
                 Logger.warn(String.format("File %s already exists", this.logFile.getPath()));
             }
-        } catch (IOException e) {
+        } catch (IOException | NullPointerException e) {
             Logger.error("Could not create LogSegment file");
             e.printStackTrace();
         }
