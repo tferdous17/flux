@@ -2,9 +2,7 @@ import commons.header.Header;
 import commons.headers.Headers;
 import producer.ProducerRecord;
 
-import javax.sound.midi.SysexMessage;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class Main {
