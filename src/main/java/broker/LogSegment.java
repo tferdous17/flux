@@ -75,4 +75,17 @@ public class LogSegment {
     public int getEndOffset() {
         return endOffset;
     }
+
+    @Override
+    public String toString() {
+        return "LogSegment{" +
+                "\npartitionNumber=" + partitionNumber +
+                ", \nlogFile=" + logFile +
+                ", \nisActive=" + isActive +
+                ", \nsegmentThresholdInBytes=" + segmentThresholdInBytes +
+                ", \ncurrentSizeInBytes=" + currentSizeInBytes +
+                ", \nstartOffset=" + startOffset +
+                ", \nendOffset=" + endOffset +
+                '}';
+    }
 }
