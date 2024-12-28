@@ -59,4 +59,14 @@ public class Log {
         return this.currentSizeInBytes;
     }
 
+    @Override
+    public String toString() {
+        return "Log{" +
+                "\nsegments=" + segments +
+                ", \ncurrentActiveSegmentIdx=" + currentActiveSegmentIdx +
+                ", \nlogStartOffset=" + logStartOffset +
+                ", \nlogEndOffset=" + logEndOffset +
+                ", \ncurrentSizeInBytes=" + currentSizeInBytes +
+                '}';
+    }
 }
