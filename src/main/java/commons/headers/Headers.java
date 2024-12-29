@@ -26,10 +26,8 @@ public class Headers implements HeadersInterface {
         // First time keys
         if (!hashMap.containsKey(key)) {
             hashMap.put(key, new ArrayList<>());
-            hashMap.get(key).add(header);
-        } else {
-            hashMap.get(key).add(header);
         }
+        hashMap.get(key).add(header);
         return this;
     }
 
