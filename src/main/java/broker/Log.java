@@ -1,5 +1,6 @@
 package broker;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,11 +17,15 @@ public class Log {
     private long currentSizeInBytes;
 
     // By default, creating a Log will also instantiate 1 empty and mutable LogSegment (default record offset: 0)
-    public Log() {
+    public Log() throws IOException {
         this.segments = new ArrayList<>();
-        this.segments.add(new LogSegment(0, 0));
-        this.logStartOffset = segments.get(0).getStartOffset();
-        this.logEndOffset = segments.get(0).getEndOffset();
+        try {
+            this.segments.add(new LogSegment(0, 0));
+            this.logStartOffset = segments.get(0).getStartOffset();
+            this.logEndOffset = segments.get(0).getEndOffset();
+        } catch (IOException e) {
+            throw e;
+        }
     }
 
     // Instantiate log with already-made segment
