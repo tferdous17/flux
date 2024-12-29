@@ -1,5 +1,6 @@
 package broker;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -16,16 +17,23 @@ public class Log {
 
     // By default, creating a Log will also instantiate 1 empty and mutable LogSegment (default record offset: 0)
     public Log() {
-        this.segments = List.of(new LogSegment(0, 0));
+        this.segments = new ArrayList<>();
+        this.segments.add(new LogSegment(0, 0));
         this.logStartOffset = segments.get(0).getStartOffset();
         this.logEndOffset = segments.get(0).getEndOffset();
     }
 
     // Instantiate log with already-made segment
     public Log(LogSegment segment) {
-        this.segments = List.of(segment);
+        this.segments = new ArrayList<>();
+        this.segments.add(segment);
         this.logStartOffset = segment.getStartOffset();
         this.logEndOffset = segment.getEndOffset();
+    }
+
+    // Instantiate with already-made list of segments
+    public Log(List<LogSegment> segments) {
+        this.segments = segments;
     }
 
     // TODO: Implement when RecordBatch is made
@@ -62,11 +70,11 @@ public class Log {
     @Override
     public String toString() {
         return "Log{" +
-                "\nsegments=" + segments +
                 ", \ncurrentActiveSegmentIdx=" + currentActiveSegmentIdx +
                 ", \nlogStartOffset=" + logStartOffset +
                 ", \nlogEndOffset=" + logEndOffset +
                 ", \ncurrentSizeInBytes=" + currentSizeInBytes +
+                ", \nsegments=" + segments +
                 '}';
     }
 }
