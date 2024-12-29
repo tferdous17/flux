@@ -20,7 +20,7 @@ public class LogSegment {
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
 
-    public LogSegment(int partitionNumber, int startOffset) {
+    public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
 
@@ -32,17 +32,17 @@ public class LogSegment {
             } else {
                 Logger.warn(String.format("File %s already exists", this.logFile.getPath()));
             }
-        } catch (IOException | NullPointerException e) {
-            Logger.error("Could not create LogSegment file");
-            e.printStackTrace();
+        } catch (IOException e) {
+            Logger.error("IOException occurred while creating LogSegment file.");
+            throw e;
         }
 
         this.isActive = true; // by default, this LogSegment is active upon creation, but tread carefully
         this.currentSizeInBytes = 0;
     }
 
-    // overloaded constructor incase we want to manually define threshold
-    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) {
+    // overloaded constructor in case we want to manually define threshold
+    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
     }
