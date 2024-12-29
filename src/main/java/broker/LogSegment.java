@@ -1,10 +1,16 @@
 package broker;
 
 import org.tinylog.Logger;
+import producer.ProducerRecord;
 
 import java.io.File;
 import java.io.IOException;
 
+/**
+ * A LogSegment is a component/storage unit that makes up a Flux Partition.
+ * Each segment holds a certain amount of records in sequential manner, typically in the form of batches.
+ * Upon reaching the defined byte threshold, a segment will automatically become immutable.
+ */
 public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
@@ -14,7 +20,7 @@ public class LogSegment {
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
 
-    public LogSegment(int partitionNumber, int startOffset) {
+    public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
 
@@ -27,16 +33,16 @@ public class LogSegment {
                 Logger.warn(String.format("File %s already exists", this.logFile.getPath()));
             }
         } catch (IOException e) {
-            Logger.error("Could not create LogSegment file");
-            e.printStackTrace();
+            Logger.error("IOException occurred while creating LogSegment file.");
+            throw e;
         }
 
         this.isActive = true; // by default, this LogSegment is active upon creation, but tread carefully
         this.currentSizeInBytes = 0;
     }
 
-    // overloaded constructor incase we want to manually define threshold
-    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) {
+    // overloaded constructor in case we want to manually define threshold
+    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
     }
@@ -73,5 +79,18 @@ public class LogSegment {
 
     public int getEndOffset() {
         return endOffset;
+    }
+
+    @Override
+    public String toString() {
+        return "LogSegment{" +
+                "\npartitionNumber=" + partitionNumber +
+                ", \nlogFile=" + logFile +
+                ", \nisActive=" + isActive +
+                ", \nsegmentThresholdInBytes=" + segmentThresholdInBytes +
+                ", \ncurrentSizeInBytes=" + currentSizeInBytes +
+                ", \nstartOffset=" + startOffset +
+                ", \nendOffset=" + endOffset +
+                '}';
     }
 }
