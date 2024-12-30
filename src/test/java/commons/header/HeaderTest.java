@@ -1,0 +1,12 @@
+package commons.header;
+
+import org.junit.jupiter.api.Test;
+
+public class HeaderTest {
+    @Test
+    public void test1() {
+        Header header = new Header("Kyoshi", "22".getBytes());
+        System.out.println(header);
+
+    }
+}
