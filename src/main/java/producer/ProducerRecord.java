@@ -10,6 +10,7 @@ The record also has an associated timestamp. If the user did not provide a times
  */
 package producer;
 import commons.header.Header;
+import commons.headers.Headers;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -21,7 +22,7 @@ public class ProducerRecord<K, V> {
     private V value;
     private Optional<Integer> partitionNumber = Optional.empty();
     private Optional<K> key = Optional.empty();
-    private Iterable<Header> headers;
+    private Headers headers = new Headers();
 
     public ProducerRecord(String topic, Integer partition, Long timestamp, K key, V value) {
         this.topic = topic;
@@ -37,15 +38,7 @@ public class ProducerRecord<K, V> {
         this.value = value;
         this.partitionNumber = Optional.ofNullable(partition);
         this.key = Optional.ofNullable(key);
-
-        if (headers != null) {
-            List<Header> headerList = new ArrayList<>();
-            headers.forEach(headerList::add);
-            this.headers = List.copyOf(headerList);
-        } else {
-            this.headers = Collections.emptyList();
-        }
-
+        this.headers = convertToHeaders(headers);
     }
 
     public ProducerRecord(String topic, Integer partition, K key, V value) {
@@ -68,13 +61,7 @@ public class ProducerRecord<K, V> {
                 .toEpochMilli();
         this.partitionNumber = Optional.ofNullable(partition);
         this.key = Optional.ofNullable(key);
-        if (headers != null) {
-            List<Header> headerList = new ArrayList<>();
-            headers.forEach(headerList::add);
-           this.headers = List.copyOf(headerList);
-        } else {
-            this.headers = Collections.emptyList();
-        }
+        this.headers = convertToHeaders(headers);
     }
 
     public ProducerRecord(String topic, K key, V value) {
@@ -102,11 +89,20 @@ public class ProducerRecord<K, V> {
     }
 
     // METHODS
+    private static Headers convertToHeaders(Iterable<Header> headers) {
+        Headers convertedHeaders = new Headers();
+        if (headers != null) {
+            headers.forEach(convertedHeaders::add);
+        }
+        return convertedHeaders;
+    }
     public String getTopic() {
         return topic;
     }
 
-    //TODO: Add Headers class.
+    public Headers getHeaders() {
+        return headers;
+    }
 
     public K getKey() {
         return key.orElse(null);
@@ -150,7 +146,8 @@ public class ProducerRecord<K, V> {
                 .append("Timestamp: ").append(getTimestamp()).append("\n")
                 .append("PartitionNumber: ").append(getPartitionNumber()).append("\n")
                 .append("Key: ").append(getKey()).append("\n")
-                .append("Value: ").append(getValue());
+                .append("Value: ").append(getValue()).append("\n")
+                .append("Headers: ").append(Arrays.toString(getHeaders().toArray()));
         return stringBuffer.toString();
     }
 }
