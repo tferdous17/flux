@@ -116,7 +116,6 @@ public class ProducerRecord<K, V> {
         return timestamp;
     }
 
-
     public V getValue() {
         return value;
     }
