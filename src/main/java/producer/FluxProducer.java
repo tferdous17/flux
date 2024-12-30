@@ -1,20 +1,20 @@
 package producer;
 
+import commons.header.Properties;
+
 import java.util.Map;
-import java.util.Properties;
 
 public class FluxProducer<K, V> implements Producer {
-    private Map<String, Object> configs;
+    private Map<String, String> configs;
     // TODO: Include RecordAccumulator once implemented
 
-    public FluxProducer(Map<String, Object> configs) {
+    public FluxProducer(Map<String, String> configs) {
         this.configs = configs;
     }
 
-    // TODO: Replace with Properties object once implemented
-//    public FluxProducer(properties obj) {
-//
-//    }
+    public FluxProducer(Properties props) {
+        this.configs = props.getAllProperties();
+    }
 
     @Override
     public boolean send(ProducerRecord record) {
