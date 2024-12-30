@@ -8,6 +8,8 @@ import commons.headers.Headers;
 import commons.serializers.OptionalSerializer;
 import commons.serializers.HeaderSerializer;
 import commons.serializers.HeadersSerializer;
+import commons.serializers.ProducerRecordSerializer;
+
 import java.util.Optional;
 
 public class SerializedProducerRecord {
@@ -18,7 +20,7 @@ public class SerializedProducerRecord {
         kryo = new Kryo();
 
         // Kyro requires each class to be registered for serialization. (Includes nested objects)
-        kryo.register(ProducerRecord.class);
+        kryo.register(ProducerRecord.class, new ProducerRecordSerializer<>(String.class, Integer.class));
         kryo.register(Optional.class, new OptionalSerializer());
         kryo.register(Headers.class, new HeadersSerializer());
         kryo.register(Header.class, new HeaderSerializer());
@@ -32,6 +34,9 @@ public class SerializedProducerRecord {
     }
 
     public static <K,V> ProducerRecord<K,V> deserialize(byte[] data, Class<K> keyClass, Class<V> valueClass) {
+        // Dynamically register the types (K,V) of Producer Record
+        kryo.register(keyClass);
+        kryo.register(valueClass);
         Input input = new Input(data);
         ProducerRecord<K, V> record = kryo.readObject(input, ProducerRecord.class);
         input.close();
