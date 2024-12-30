@@ -1,11 +1,13 @@
-package commons.serializers;
+package producer;
 
 import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
+import commons.header.Header;
 import commons.headers.Headers;
-import producer.ProducerRecord;
-
+import commons.serializers.OptionalSerializer;
+import commons.serializers.HeaderSerializer;
+import commons.serializers.HeadersSerializer;
 import java.util.Optional;
 
 public class SerializedProducerRecord {
@@ -17,8 +19,9 @@ public class SerializedProducerRecord {
 
         // Kyro requires each class to be registered for serialization. (Includes nested objects)
         kryo.register(ProducerRecord.class);
-//        kryo.register(Optional.class, new SerializedOptional());
-//        kryo.register(Headers.class, new SerializedHeaders());
+        kryo.register(Optional.class, new OptionalSerializer());
+        kryo.register(Headers.class, new HeadersSerializer());
+        kryo.register(Header.class, new HeaderSerializer());
     }
 
     public static <K,V> byte[] serialize(ProducerRecord<K,V> record) {

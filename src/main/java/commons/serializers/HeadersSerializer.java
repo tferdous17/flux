@@ -7,7 +7,7 @@ import com.esotericsoftware.kryo.io.Output;
 import commons.header.Header;
 import commons.headers.Headers;
 
-public class SerializedHeaders extends Serializer<Headers> {
+public class HeadersSerializer extends Serializer<Headers> {
 
     @Override
     public void write(Kryo kryo, Output output, Headers headers) {
