@@ -7,7 +7,7 @@ import com.esotericsoftware.kryo.io.Output;
 
 import java.util.Optional;
 
-public class SerializedOptional extends Serializer<Optional<?>>{
+public class OptionalSerializer extends Serializer<Optional<?>>{
     @Override
     public void write(Kryo kryo, Output output, Optional<?> optional) {
         output.writeBoolean(optional.isPresent());
