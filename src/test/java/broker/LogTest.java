@@ -12,11 +12,13 @@ public class LogTest {
         Log log = new Log();
         System.out.println(log);
     }
+
     @Test
     public void existingLogSegmentConstructorTest() throws IOException {
         Log log = new Log( new LogSegment(1,0));
         System.out.println(log);
     }
+
     @Test
     public void existingLogSegmentListConstructorTest() throws IOException {
         LogSegment premadeLogSegment1 = new LogSegment(1, 0);
