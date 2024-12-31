@@ -4,9 +4,8 @@ import org.junit.jupiter.api.Test;
 
 public class HeaderTest {
     @Test
-    public void test1() {
+    public void headerTest() {
         Header header = new Header("Kyoshi", "22".getBytes());
         System.out.println(header);
-
     }
 }
