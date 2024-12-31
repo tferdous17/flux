@@ -14,6 +14,7 @@ import java.util.Optional;
 
 public class SerializedProducerRecord {
     private static Kryo kryo;
+    static final int INITIAL_BUFFER_SIZE = 4096;
 
     static {
         // All classes will share a single Kryo object.
@@ -27,7 +28,7 @@ public class SerializedProducerRecord {
     }
 
     public static <K,V> byte[] serialize(ProducerRecord<K,V> record) {
-        final Output output = new Output(4096, -1); // 4 KB is the typical size of memory page
+        final Output output = new Output(INITIAL_BUFFER_SIZE, -1); // 4 KB is the typical size of memory page
         kryo.writeObject(output, record);
         output.close();
         return output.getBuffer();
