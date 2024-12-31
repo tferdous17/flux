@@ -11,25 +11,27 @@ public class SerializedProducerRecordTest {
     public void serializedProducerRecordTest() {
         Headers headers = new Headers();
         headers.add(new Header("Kyoshi", "22".getBytes()));
-        ProducerRecord<String, Integer> record = new ProducerRecord<>(
+        ProducerRecord<String, String> record = new ProducerRecord<>(
                 "Bob",
                 0,
                 System.currentTimeMillis(),
                 "key",
-                22,
+                "22",
                 headers
         );
 
         // Serialize
-        byte[] serializedData = SerializedProducerRecord.serialize(record);
+        byte[] serializedData = SerializedProducerRecord.serialize(record, String.class, String.class);
         System.out.println(Arrays.toString(serializedData));
         System.out.println("Serialized Data Length: " + serializedData.length + "\n");
 
         // Deserialize
-        ProducerRecord<String, Integer> deserializedRecord = SerializedProducerRecord.deserialize(
+        ProducerRecord<String, String> deserializedRecord = SerializedProducerRecord.deserialize(
                 serializedData,
                 String.class,
-                Integer.class
+                String.class
         );
+
+        System.out.println("Deserialized Record: " + deserializedRecord.toString());
     }
 }
