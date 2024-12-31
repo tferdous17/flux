@@ -56,6 +56,6 @@ public class RecordBatch {
     public void printBatchDetails() {
         System.out.println("Number of Records: " + getRecordCount());
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
-        System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
+        System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes\n");
     }
 }
