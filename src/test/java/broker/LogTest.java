@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.util.List;
 
-// WIP: Fix failing test cases due to missing file, "./data/partition%d_%05d.log"
+// TODO: Fix failing test cases due to missing file, "./data/partition%d_%05d.log"
 public class LogTest {
     @Test
     public void defaultConstructorTest() throws IOException {
