@@ -17,10 +17,9 @@ public class OptionalSerializer extends Serializer<Optional<?>>{
     @Override
     public Optional<?> read(Kryo kryo, Input input, Class<? extends Optional<?>> aClass) {
         boolean isPresent = input.readBoolean();
-        if(isPresent) {
-            return Optional.of(kryo.readClassAndObject(input));
-        } else {
-            return Optional.empty();
-        }
+
+        return isPresent ?
+                Optional.of(kryo.readClassAndObject(input))
+                : Optional.empty();
     }
 }

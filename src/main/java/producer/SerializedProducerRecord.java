@@ -27,7 +27,7 @@ public class SerializedProducerRecord {
     }
 
     public static <K,V> byte[] serialize(ProducerRecord<K,V> record) {
-        Output output = new Output(4096, -1); // 4 KB is the typical size of memory page
+        final Output output = new Output(4096, -1); // 4 KB is the typical size of memory page
         kryo.writeObject(output, record);
         output.close();
         return output.getBuffer();
