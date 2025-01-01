@@ -1,10 +1,13 @@
 package broker;
 
 import org.tinylog.Logger;
-import producer.ProducerRecord;
+import producer.RecordBatch;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -52,9 +55,35 @@ public class LogSegment {
         this.isActive = false;
     }
 
-    // TODO: Implement below method once RecordBatch is implemented
-    public boolean writeBatchToSegment() {
-        return true;
+    public void writeBatchToSegment(RecordBatch batch) throws IOException {
+        if (this.currentSizeInBytes >= segmentThresholdInBytes) {
+            Logger.info("Log segment has become immutable, new one may be necessary.");
+            setAsImmutable();
+            return;
+        }
+        if (!isActive || batch.getCurrBatchSizeInBytes() == 0 || batch == null) {
+            Logger.warn("Batch either immutable, empty, or null.");
+            return;
+        }
+        if (this.currentSizeInBytes + batch.getCurrBatchSizeInBytes() > segmentThresholdInBytes) {
+            Logger.warn("Size of batch exceeds log segment threshold.");
+            return;
+        }
+
+        // grab the buffer and throw the occupied space in the buffer to a byte arr that will be written to disk
+        ByteBuffer buffer = batch.getBatchBuffer().flip();
+        byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
+        buffer.get(occupiedData); // transfers bytes from buffer --> occupiedData
+
+        try {
+            // write occupied data to the log file
+            Files.write(Path.of(logFile.getPath()), occupiedData);
+            this.currentSizeInBytes += occupiedData.length;
+            Logger.info("Batch successfully written to segment.");
+        } catch (IOException e) {
+            Logger.error("Failed to write batch to log segment. Error: " + e.getMessage(), e);
+            throw new IOException();
+        }
     }
 
     public boolean isActive() {
