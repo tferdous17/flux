@@ -2,6 +2,8 @@ package producer;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+
 public class RecordBatchTest {
 
     @Test
@@ -17,7 +19,7 @@ public class RecordBatchTest {
     }
 
     @Test
-    public void addSerializedRecordToBatchTest() {
+    public void addSerializedRecordToBatchTest() throws IOException {
         RecordBatch batch = new RecordBatch();
         byte[] record = {10, 39, 122, 19, 93, 34, 9};
         boolean res = batch.append(record);
