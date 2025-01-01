@@ -17,9 +17,8 @@ public class FluxProducer<K, V> implements Producer {
     }
 
     @Override
-    public boolean send(ProducerRecord record) {
+    public void send(ProducerRecord record) {
         // TODO: implementation of this method depends on RecordAccumulator to be done
-        return false;
     }
 
     @Override
