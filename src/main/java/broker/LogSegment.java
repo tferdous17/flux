@@ -15,8 +15,8 @@ public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
     private boolean isActive; // if isActive is true, the segment is mutable
-    private long segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
-    private long currentSizeInBytes;
+    private int segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
+    private int currentSizeInBytes;
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
 
@@ -42,7 +42,7 @@ public class LogSegment {
     }
 
     // overloaded constructor in case we want to manually define threshold
-    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) throws IOException {
+    public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
     }
@@ -65,11 +65,11 @@ public class LogSegment {
         return partitionNumber;
     }
 
-    public long getSegmentThresholdInBytes() {
+    public int getSegmentThresholdInBytes() {
         return segmentThresholdInBytes;
     }
 
-    public long getCurrentSizeInBytes() {
+    public int getCurrentSizeInBytes() {
         return currentSizeInBytes;
     }
 
