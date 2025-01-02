@@ -59,14 +59,19 @@ public class ConsumerRecord<K, V> {
     @Override
     public String toString() {
         StringBuilder stringBuffer = new StringBuilder();
-        StringBuilder headersString = new StringBuilder();
 
-        for (Header header : this.headers) {
-            headersString.append(header.toString());
+        if (headers != null) {
+            StringBuilder headersString = new StringBuilder();
+
+            for (Header header : this.headers) {
+                headersString.append(header.toString());
+            }
+
+            stringBuffer.append("Headers: ").append(headersString);
         }
 
         stringBuffer
-                .append("Headers: ").append(headersString)
+
                 .append("Topic: ").append(String.valueOf(getTopic())).append("\n")
                 .append("Timestamp: ").append(getTimestamp()).append("\n")
                 .append("Offset: ").append(getOffset()).append("\n")
