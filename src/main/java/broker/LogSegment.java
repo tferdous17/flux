@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -50,14 +51,18 @@ public class LogSegment {
         this.segmentThresholdInBytes = segmentThresholdInBytes;
     }
 
+    public boolean shouldBeImmutable() {
+        return this.currentSizeInBytes >= segmentThresholdInBytes;
+    }
+
     // once its immutable, the LogSegment can not be written to anymore (important)
     public void setAsImmutable() {
         this.isActive = false;
     }
 
     public void writeBatchToSegment(RecordBatch batch) throws IOException {
-        if (this.currentSizeInBytes >= segmentThresholdInBytes) {
-            Logger.info("Log segment has become immutable, new one may be necessary.");
+        if (shouldBeImmutable()) {
+            Logger.info("Log segment is now at capacity, setting as immutable.");
             setAsImmutable();
             return;
         }
@@ -77,17 +82,21 @@ public class LogSegment {
 
         try {
             // write occupied data to the log file
-            Files.write(Path.of(logFile.getPath()), occupiedData);
+            Files.write(Path.of(logFile.getPath()), occupiedData, StandardOpenOption.APPEND);
             this.currentSizeInBytes += occupiedData.length;
             Logger.info("Batch successfully written to segment.");
         } catch (IOException e) {
-            Logger.error("Failed to write batch to log segment. Error: " + e.getMessage(), e);
-            throw new IOException();
+            Logger.error("Failed to write batch to log segment.", e);
+            throw e;
         }
     }
 
     public boolean isActive() {
         return isActive;
+    }
+
+    public File getLogFile() {
+        return logFile;
     }
 
     public int getPartitionNumber() {
