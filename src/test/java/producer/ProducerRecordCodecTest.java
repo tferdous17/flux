@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 
-public class SerializedProducerRecordTest {
+public class ProducerRecordCodecTest {
     @Test
     public void serializedProducerRecordTest() {
         Headers headers = new Headers();
@@ -21,12 +21,12 @@ public class SerializedProducerRecordTest {
         );
 
         // Serialize
-        byte[] serializedData = SerializedProducerRecord.serialize(record, String.class, String.class);
+        byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
         System.out.println(Arrays.toString(serializedData));
         System.out.println("Serialized Data Length: " + serializedData.length + "\n");
 
         // Deserialize
-        ProducerRecord<String, String> deserializedRecord = SerializedProducerRecord.deserialize(
+        ProducerRecord<String, String> deserializedRecord = ProducerRecordCodec.deserialize(
                 serializedData,
                 String.class,
                 String.class

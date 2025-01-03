@@ -13,7 +13,7 @@ import commons.serializers.ProducerRecordSerializer;
 import java.nio.ByteBuffer;
 import java.util.Optional;
 
-public class SerializedProducerRecord {
+public class ProducerRecordCodec {
     private static Kryo kryo;
     static final int INITIAL_BUFFER_SIZE = 4096;
 
@@ -40,13 +40,13 @@ public class SerializedProducerRecord {
 
         // Both dataSize and offset are 4 bytes => 4 * 2 fields => 8 bytes = metadata size.
         int metadataSize = Integer.BYTES * 2;
-        ByteBuffer metadataBuffer = ByteBuffer.allocate(metadataSize + dataSize); // Total size + offset
+        ByteBuffer completeRecordBuffer = ByteBuffer.allocate(metadataSize + dataSize); // Total size + offset
 
-        metadataBuffer.putInt(dataSize);
-        metadataBuffer.putInt(INITIAL_BUFFER_SIZE); // Offset (example: for simplicity, it's set to the buffer size)
-        metadataBuffer.put(serializedData);
+        completeRecordBuffer.putInt(dataSize);
+        completeRecordBuffer.putInt(INITIAL_BUFFER_SIZE); // Offset (example: for simplicity, it's set to the buffer size)
+        completeRecordBuffer.put(serializedData);
 
-        return metadataBuffer.array();
+        return completeRecordBuffer.array();
     }
 
     public static <K, V> ProducerRecord<K, V> deserialize(byte[] data, Class<K> keyClass, Class<V> valueClass) {
