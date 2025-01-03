@@ -10,6 +10,7 @@ import commons.serializers.HeaderSerializer;
 import commons.serializers.HeadersSerializer;
 import commons.serializers.ProducerRecordSerializer;
 
+import java.nio.ByteBuffer;
 import java.util.Optional;
 
 public class SerializedProducerRecord {
@@ -33,14 +34,34 @@ public class SerializedProducerRecord {
         final Output output = new Output(INITIAL_BUFFER_SIZE, -1); // 4 KB is the typical size of memory page
         kryo.writeObject(output, record);
         output.close();
-        return output.getBuffer();
+
+        byte[] serializedData = output.getBuffer();
+        int dataSize = serializedData.length;
+
+        // Both dataSize and offset are 4 bytes => 4 * 2 fields => 8 bytes = metadata size.
+        int metadataSize = Integer.BYTES * 2;
+        ByteBuffer metadataBuffer = ByteBuffer.allocate(metadataSize + dataSize); // Total size + offset
+
+        metadataBuffer.putInt(dataSize);
+        metadataBuffer.putInt(INITIAL_BUFFER_SIZE); // Offset (example: for simplicity, it's set to the buffer size)
+        metadataBuffer.put(serializedData);
+
+        return metadataBuffer.array();
     }
 
-    public static <K,V> ProducerRecord<K,V> deserialize(byte[] data, Class<K> keyClass, Class<V> valueClass) {
-        // Dynamically register the types (K,V) of Producer Record
+    public static <K, V> ProducerRecord<K, V> deserialize(byte[] data, Class<K> keyClass, Class<V> valueClass) {
+        // Read metadata
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        int dataSize = buffer.getInt();
+        int offset = buffer.getInt(); // For future use, e.g., key and value offsets
+
+        byte[] recordData = new byte[dataSize];
+        buffer.get(recordData);
+
+        // Dynamically register the types (K, V) of Producer Record
         kryo.register(keyClass);
         kryo.register(valueClass);
-        Input input = new Input(data);
+        Input input = new Input(recordData);
         ProducerRecord<K, V> record = kryo.readObject(input, ProducerRecord.class);
         input.close();
         return record;
