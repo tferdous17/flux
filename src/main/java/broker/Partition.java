@@ -21,7 +21,7 @@ public class Partition {
     private Log log;
     private int partitionId;
     private AtomicInteger currentOffset;
-    private static final long MAX_SEGMENT_SIZE = 1024;
+    private static final long MAX_SEGMENT_SIZE = 1_048_576;
 
     public Partition(Log log, int partitionId) {
         this.log = log;
