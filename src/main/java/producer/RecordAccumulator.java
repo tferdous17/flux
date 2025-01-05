@@ -47,6 +47,21 @@ public class RecordAccumulator {
         Logger.info("Record appended successfully.");
     }
 
+    public RecordBatch getCurrentBatch() {
+        return currentBatch;
+    }
+
+    public int getBatchSize() {
+        return batchSize;
+    }
+
+    public void printRecord() {
+        System.out.println("Batch Size: " + getBatchSize());
+        System.out.println("Current Batch:");
+
+        getCurrentBatch().printBatchDetails();
+    }
+
     private int validateBatchSize(int batchSize) {
         final int MIN_BATCH_SIZE = 1; // Minimum size
         final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
