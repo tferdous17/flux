@@ -81,6 +81,18 @@ public class LogSegment {
         return endOffset;
     }
 
+    public void setLogFile(File logFile) {this.logFile = logFile;}
+
+    public void setActive(boolean active) {isActive = active;}
+
+    public void setSegmentThresholdInBytes(long segmentThresholdInBytes) {this.segmentThresholdInBytes = segmentThresholdInBytes;}
+
+    public void setCurrentSizeInBytes(long currentSizeInBytes) {this.currentSizeInBytes = currentSizeInBytes;}
+
+    public void setStartOffset(int startOffset) {this.startOffset = startOffset;}
+
+    public void setEndOffset(int endOffset) {this.endOffset = endOffset;}
+
     @Override
     public String toString() {
         return "LogSegment{" +

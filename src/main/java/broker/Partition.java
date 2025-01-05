@@ -17,11 +17,11 @@ public class Partition {
     }
 
     private boolean canAppendRecordToSegment( byte[] record) {
-        LogSegment activeSegment1 = log.getCurrentActiveLogSegment(); //Fetches Current active segment as a commented
-        if (!activeSegment1.isActive()) {
+        LogSegment activeSegment = log.getCurrentActiveLogSegment(); //Fetches Current active segment as a commented
+        if (!activeSegment.isActive()) {
             return false;
         }
-        return (activeSegment1.getCurrentSizeInBytes() + record.length) <= activeSegment1.getSegmentThresholdInBytes();
+        return (activeSegment.getCurrentSizeInBytes() + record.length) <= activeSegment.getSegmentThresholdInBytes();
     }
 
     private LogSegment createNewSegment() throws IOException {
@@ -32,32 +32,25 @@ public class Partition {
         return newSegment;
     }
 
-    private void appendRecordToSegment(LogSegment segment, byte[] record) {
-
-     //   segment.
-
-      //  Logger.debug("Appended record at offset {}", newOffset - 1);
-    }
-
-    public int appendRecordBatch(RecordBatch batch) throws IOException {
-        if (batch == null || batch.getBatch().isEmpty()) {
-            throw new IllegalArgumentException("Cannot append null or empty batch");
-        }
-
-        int batchStartOffset = currentOffset.get();
+    private void appendRecordToSegment( byte[] record) {
         LogSegment activeSegment = log.getCurrentActiveLogSegment();
+        activeSegment.setCurrentSizeInBytes(activeSegment.getCurrentSizeInBytes() + record.length);
 
-        for (byte[] record : batch.getBatch()) {
-            if (!canAppendRecordToSegment(activeSegment, record)) {
-                activeSegment = createNewSegment();
-            }
-            appendRecordToSegment(activeSegment, record);
-        }
+        int newOffset = currentOffset.incrementAndGet();
+        activeSegment.setEndOffset(newOffset);
 
-        Logger.info("Successfully appended {} records starting at offset {}",
-                batch.getRecordCount(), batchStartOffset);
-        return batchStartOffset;
+        Logger.debug("Appended record at offset {}", newOffset - 1);
     }
+
+
+
+    //this one also
+    public int appendRecordBatch(RecordBatch batch) throws IOException {
+        //Waiting for writebatchsegment
+       return 10;}
+
+
+
 
     public int getCurrentOffset() {
         return currentOffset.get();
@@ -69,5 +62,17 @@ public class Partition {
 
     public Log getLog() {
         return log;
+    }
+
+    public void setCurrentOffset(AtomicInteger currentOffset) {
+        this.currentOffset = currentOffset;
+    }
+
+    public void setPartitionId(int partitionId) {
+        this.partitionId = partitionId;
+    }
+
+    public void setLog(Log log) {
+        this.log = log;
     }
 }
