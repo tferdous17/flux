@@ -5,39 +5,27 @@ import producer.RecordBatch;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Extended LogSegment that provides access to private fields we need
- */
-class ExtendedLogSegment extends LogSegment {
-    public ExtendedLogSegment(int partitionNumber, int startOffset) throws IOException {
-        super(partitionNumber, startOffset);
-    }
-
-    public long currentSizeInBytes;
-    public int endOffset;
-}
-
 public class Partition {
     private Log log;
     private int partitionId;
     private AtomicInteger currentOffset;
-    private static final long MAX_SEGMENT_SIZE = 1_048_576;
 
-    public Partition(Log log, int partitionId) {
-        this.log = log;
+    public Partition( int partitionId) throws IOException {
+        this.log = new Log();
         this.partitionId = partitionId;
         this.currentOffset = new AtomicInteger(log.getLogEndOffset());
     }
 
-    private boolean canAppendRecordToSegment(LogSegment segment, byte[] record) {
-        if (!segment.isActive()) {
+    private boolean canAppendRecordToSegment( byte[] record) {
+        LogSegment activeSegment1 = log.getCurrentActiveLogSegment(); //Fetches Current active segment as a commented
+        if (!activeSegment1.isActive()) {
             return false;
         }
-        return (segment.getCurrentSizeInBytes() + record.length) <= MAX_SEGMENT_SIZE;
+        return (activeSegment1.getCurrentSizeInBytes() + record.length) <= activeSegment1.getSegmentThresholdInBytes();
     }
 
     private LogSegment createNewSegment() throws IOException {
-        ExtendedLogSegment newSegment = new ExtendedLogSegment(partitionId, currentOffset.get());
+        LogSegment newSegment = new LogSegment(partitionId, currentOffset.get());
         log.getAllLogSegments().add(newSegment);
 
         Logger.info("Created new log segment starting at offset {}", currentOffset.get());
@@ -45,13 +33,10 @@ public class Partition {
     }
 
     private void appendRecordToSegment(LogSegment segment, byte[] record) {
-        ExtendedLogSegment extSegment = (ExtendedLogSegment) segment;
-        extSegment.currentSizeInBytes += record.length;
 
-        int newOffset = currentOffset.incrementAndGet();
-        extSegment.endOffset = newOffset;
+     //   segment.
 
-        Logger.debug("Appended record at offset {}", newOffset - 1);
+      //  Logger.debug("Appended record at offset {}", newOffset - 1);
     }
 
     public int appendRecordBatch(RecordBatch batch) throws IOException {
