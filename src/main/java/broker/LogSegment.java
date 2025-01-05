@@ -9,6 +9,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -24,6 +26,44 @@ public class LogSegment {
     private int currentSizeInBytes;
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
+    private ByteBuffer buffer;
+
+    private class IndexEntries {
+        public Map<Integer, Integer> recordOffsetToByteOffsets;
+        private final int flushThreshold = 5; // test value, can adjust as needed
+
+        public IndexEntries() {
+            recordOffsetToByteOffsets = new HashMap<>();
+        }
+
+        // creates new entry and also handles automatic flushing
+        public void createNewEntry(int recordOffset, int byteOffset) {
+            recordOffsetToByteOffsets.put(recordOffset, byteOffset);
+            if (recordOffsetToByteOffsets.size() >= flushThreshold) {
+                try {
+                    flushIndexEntries();
+                    recordOffsetToByteOffsets.clear();
+                }
+                catch (IOException e) {
+                    Logger.error("Error when flushing index entries.");
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        public void flushIndexEntries() throws IOException {
+            // 8 bytes per entry (4 for record offset, 4 for byte offset)
+            int numOfOffsetPairs = recordOffsetToByteOffsets.size();
+            ByteBuffer buffer = ByteBuffer.allocate(numOfOffsetPairs * 8);
+
+            recordOffsetToByteOffsets.forEach((recOffset, byteOffset) -> {
+                buffer.putInt(recOffset);
+                buffer.putInt(byteOffset);
+            });
+
+            Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
+        }
+    }
 
     public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
@@ -36,6 +76,7 @@ public class LogSegment {
 
             this.logFile = createFile(logFileName);
             this.indexFile = createFile(indexFileName);
+
         } catch (IOException e) {
             Logger.error("IOException occurred while creating LogSegment files.");
             throw e;
@@ -112,6 +153,10 @@ public class LogSegment {
 
     public File getLogFile() {
         return logFile;
+    }
+
+    public File getIndexFile() {
+        return indexFile;
     }
 
     public int getPartitionNumber() {
