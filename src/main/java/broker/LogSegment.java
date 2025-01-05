@@ -18,6 +18,7 @@ import java.nio.file.StandardOpenOption;
 public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
+    private File indexFile;
     private boolean isActive; // if isActive is true, the segment is mutable
     private int segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
     private int currentSizeInBytes;
@@ -30,14 +31,13 @@ public class LogSegment {
 
         try {
             // ex: partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
-            this.logFile = new File(String.format("./data/partition%d_%05d.log", this.partitionNumber, this.startOffset));
-            if (this.logFile.createNewFile()) {
-                Logger.info(String.format("File created: %s%n", this.logFile.getPath()));
-            } else {
-                Logger.warn(String.format("File %s already exists", this.logFile.getPath()));
-            }
+            String logFileName = String.format("./data/partition%d_%05d.log", this.partitionNumber, this.startOffset);
+            String indexFileName = String.format("./data/partition%d_%05d.index", this.partitionNumber, this.startOffset);
+
+            this.logFile = createFile(logFileName);
+            this.indexFile = createFile(indexFileName);
         } catch (IOException e) {
-            Logger.error("IOException occurred while creating LogSegment file.");
+            Logger.error("IOException occurred while creating LogSegment files.");
             throw e;
         }
 
@@ -49,6 +49,21 @@ public class LogSegment {
     public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
+    }
+
+    // Helper method
+    private File createFile(String fileName) throws IOException {
+        File file = new File(fileName);
+        try {
+            if (file.createNewFile()) {
+                Logger.info("File created: " + file.getPath());
+            } else {
+                Logger.warn("File already exists: " + file.getPath());
+            }
+        } catch (IOException e) {
+            throw e;
+        }
+        return file;
     }
 
     public boolean shouldBeImmutable() {
