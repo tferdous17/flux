@@ -32,16 +32,19 @@ public class RecordAccumulator {
     public void append(byte[] serializedRecord) throws IOException {
         // Single assumption
         int partition = 0;
-        long baseOffset = 0L;
+        int baseOffset = 0;
 
         // Check if current batch exists or is full
-        if (currentBatch == null || !currentBatch.append(serializedRecord)) {
+        if (currentBatch == null) {
             Logger.info("Batch is full or not present. Creating a new batch.");
             currentBatch = createBatch(partition, baseOffset);
 
             if (!currentBatch.append(serializedRecord)) {
                 throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
             }
+        }  // batch is full
+        else if(!currentBatch.append(serializedRecord)) {
+            flush(); // TODO: Missing flush() method
         }
 
         Logger.info("Record appended successfully.");
