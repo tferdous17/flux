@@ -42,15 +42,25 @@ public class Partition {
         Logger.debug("Appended record at offset {}", newOffset - 1);
     }
 
-
-
-    //this one also
     public int appendRecordBatch(RecordBatch batch) throws IOException {
-        //Waiting for writebatchsegment
-       return 10;}
+        if (batch == null || batch.getBatch().isEmpty()) {
+            throw new IllegalArgumentException("Batch is empty");
+        }
+        int batchStartOffset = currentOffset.get();
+        LogSegment activeSegment = log.getCurrentActiveLogSegment();
 
+        if (activeSegment.getCurrentSizeInBytes() + batch.getCurrBatchSizeInBytes() > activeSegment.getSegmentThresholdInBytes()) {
+            activeSegment = createNewSegment();
+        }
+        activeSegment.writeBatchToSegment(batch); // My ide doesn't have the current writebatchsegment code so this will give an error
 
+        currentOffset.addAndGet(batch.getRecordCount());
 
+        Logger.info("Successfully appended {} records starting at offset {}",
+                batch.getRecordCount(), batchStartOffset);
+
+        return batchStartOffset;
+    }
 
     public int getCurrentOffset() {
         return currentOffset.get();
