@@ -26,8 +26,12 @@ public class LogSegment {
     private int currentSizeInBytes;
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
-    private ByteBuffer buffer;
+    private IndexEntries entries;
 
+    /**
+     * Represents a Record Offset --> Byte Offset pair
+     * NOTE: Full implementation depends on global record offset management to be implemented
+     */
     private class IndexEntries {
         public Map<Integer, Integer> recordOffsetToByteOffsets;
         private final int flushThreshold = 5; // test value, can adjust as needed
@@ -68,6 +72,7 @@ public class LogSegment {
     public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
+        entries = new IndexEntries();
 
         try {
             // ex: partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
@@ -131,6 +136,7 @@ public class LogSegment {
             return;
         }
 
+
         // grab the buffer and throw the occupied space in the buffer to a byte arr that will be written to disk
         ByteBuffer buffer = batch.getBatchBuffer().flip();
         byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
@@ -177,6 +183,10 @@ public class LogSegment {
 
     public int getEndOffset() {
         return endOffset;
+    }
+
+    public IndexEntries getEntries() {
+        return entries;
     }
 
     @Override
