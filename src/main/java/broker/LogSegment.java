@@ -1,10 +1,14 @@
 package broker;
 
 import org.tinylog.Logger;
-import producer.ProducerRecord;
+import producer.RecordBatch;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -15,8 +19,8 @@ public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
     private boolean isActive; // if isActive is true, the segment is mutable
-    private long segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
-    private long currentSizeInBytes;
+    private int segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
+    private int currentSizeInBytes;
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
 
@@ -42,9 +46,13 @@ public class LogSegment {
     }
 
     // overloaded constructor in case we want to manually define threshold
-    public LogSegment(int partitionNumber, int startOffset, long segmentThresholdInBytes) throws IOException {
+    public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
+    }
+
+    public boolean shouldBeImmutable() {
+        return this.currentSizeInBytes >= segmentThresholdInBytes;
     }
 
     // once its immutable, the LogSegment can not be written to anymore (important)
@@ -52,24 +60,54 @@ public class LogSegment {
         this.isActive = false;
     }
 
-    // TODO: Implement below method once RecordBatch is implemented
-    public boolean writeBatchToSegment() {
-        return true;
+    public void writeBatchToSegment(RecordBatch batch) throws IOException {
+        if (shouldBeImmutable()) {
+            Logger.info("Log segment is now at capacity, setting as immutable.");
+            setAsImmutable();
+            return;
+        }
+        if (!isActive || batch.getCurrBatchSizeInBytes() == 0 || batch == null) {
+            Logger.warn("Batch either immutable, empty, or null.");
+            return;
+        }
+        if (this.currentSizeInBytes + batch.getCurrBatchSizeInBytes() > segmentThresholdInBytes) {
+            Logger.warn("Size of batch exceeds log segment threshold.");
+            return;
+        }
+
+        // grab the buffer and throw the occupied space in the buffer to a byte arr that will be written to disk
+        ByteBuffer buffer = batch.getBatchBuffer().flip();
+        byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
+        buffer.get(occupiedData); // transfers bytes from buffer --> occupiedData
+
+        try {
+            // write occupied data to the log file
+            Files.write(Path.of(logFile.getPath()), occupiedData, StandardOpenOption.APPEND);
+            this.currentSizeInBytes += occupiedData.length;
+            Logger.info("Batch successfully written to segment.");
+        } catch (IOException e) {
+            Logger.error("Failed to write batch to log segment.", e);
+            throw e;
+        }
     }
 
     public boolean isActive() {
         return isActive;
     }
 
+    public File getLogFile() {
+        return logFile;
+    }
+
     public int getPartitionNumber() {
         return partitionNumber;
     }
 
-    public long getSegmentThresholdInBytes() {
+    public int getSegmentThresholdInBytes() {
         return segmentThresholdInBytes;
     }
 
-    public long getCurrentSizeInBytes() {
+    public int getCurrentSizeInBytes() {
         return currentSizeInBytes;
     }
 

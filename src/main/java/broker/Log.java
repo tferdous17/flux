@@ -14,7 +14,7 @@ public class Log {
     private int currentActiveSegmentIdx = 0; // references index in above list
     private int logStartOffset; // record offsets, not bytes
     private int logEndOffset;
-    private long currentSizeInBytes;
+    private int currentSizeInBytes;
 
     // By default, creating a Log will also instantiate 1 empty and mutable LogSegment (default record offset: 0)
     public Log() throws IOException {
@@ -68,7 +68,7 @@ public class Log {
         return logEndOffset;
     }
 
-    public long getCurrentSizeInBytes() {
+    public int getCurrentSizeInBytes() {
         return this.currentSizeInBytes;
     }
 
