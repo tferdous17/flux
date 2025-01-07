@@ -3,6 +3,7 @@ import org.tinylog.Logger;
 import producer.RecordBatch;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,13 +49,20 @@ public class Partition {
         Logger.debug("Appended record at offset {}", newOffset - 1);
     }
 
+    // Had to switch implementation of this since getBatch method deleted
     public int appendRecordBatch(RecordBatch batch) throws IOException {
-        if (batch == null || batch.getBatch().isEmpty()) {
+        if (batch == null || batch.getRecordCount() == 0 || batch.getCurrBatchSizeInBytes() == 0) {
             throw new IllegalArgumentException("Batch is empty");
         }
 
         int batchStartOffset = currentOffset.get();
-        for (byte[] record : batch.getBatch()) {
+        ByteBuffer batchBuffer = batch.getBatchBuffer();
+
+        while (batchBuffer.hasRemaining()) {
+            // I am Assuming each record is of a known size or can be deserialized from the buffer
+            byte[] record = new byte[batchBuffer.remaining()];
+            batchBuffer.get(record);  // Extract the record
+
             if (!canAppendRecordToSegment(record)) {
                 activeSegment = createNewSegment();
             }
