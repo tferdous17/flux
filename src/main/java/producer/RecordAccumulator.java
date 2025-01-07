@@ -29,31 +29,37 @@ public class RecordAccumulator {
         return true;
     }
 
+    /*
+    1. Check for both cases:
+        1A) First-time batch exists -> currentBatch == null
+        1B) Full batches -> !currentBatch.append(record)
+    2. If we are NON-first-time batch, and it's full... we should flush and create a new batch since we flushed the old ones.
+    3. Therefore, in both cases 1A and 1B we still need to call createBatch()... call createBatch() once only for both cases.
+    4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
+    */
     public void append(byte[] serializedRecord) throws IOException {
-        // Single assumption
+        // Single partition assumption
         int partition = 0;
         int baseOffset = 0;
         try {
-            // Check if current batch exists or is full
-            if (currentBatch == null) {
-                Logger.info("Batch is full or not present. Creating a new batch.");
-                currentBatch = createBatch(partition, baseOffset);
-
+            if (currentBatch == null || !currentBatch.append(serializedRecord)) {
+                if (currentBatch != null) { // Case 1B
+                    Logger.info("Batch is full. Flushing current batch.");
+                    flush(); // TODO: Missing implementation
+                }
+                Logger.info("Creating a new batch for partition " + partition + ".");
+                currentBatch = createBatch(partition, baseOffset); // Step 3
                 if (!currentBatch.append(serializedRecord)) {
                     throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
                 }
-            }  // batch is full
-            else if(!currentBatch.append(serializedRecord)) {
-                Logger.info("Batch is full. Flushing current batch and creating a new one.");
-                flush(); // TODO: Missing flush() method
             }
             Logger.info("Record appended successfully.");
-
-        } catch(Exception e) {
+        } catch (Exception e) {
             Logger.error("Failed to append record: " + e.getMessage(), e);
+            throw e;
         }
-
     }
+
 
     public RecordBatch getCurrentBatch() {
         return currentBatch;
