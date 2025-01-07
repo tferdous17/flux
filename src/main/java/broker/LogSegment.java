@@ -123,9 +123,9 @@ public class LogSegment {
 
     public void setActive(boolean active) {isActive = active;}
 
-    public void setSegmentThresholdInBytes(long segmentThresholdInBytes) {this.segmentThresholdInBytes = segmentThresholdInBytes;}
+    public void setSegmentThresholdInBytes(int segmentThresholdInBytes) {this.segmentThresholdInBytes = segmentThresholdInBytes;}
 
-    public void setCurrentSizeInBytes(long currentSizeInBytes) {this.currentSizeInBytes = currentSizeInBytes;}
+    public void setCurrentSizeInBytes(int currentSizeInBytes) {this.currentSizeInBytes = currentSizeInBytes;}
 
     public void setStartOffset(int startOffset) {this.startOffset = startOffset;}
 
