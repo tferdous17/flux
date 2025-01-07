@@ -1,15 +1,18 @@
 package consumer;
 
 import commons.header.Header;
+import commons.headers.Headers;
+
+import java.util.Optional;
 
 public class ConsumerRecord<K, V> {
     private String topic;
     private int partition;
     private long offset;
     private long timestamp;
-    private K key = null;
+    private Optional<K> key = null;
     private V value;
-    private Iterable<Header> headers;
+    private Headers headers;
 
     public ConsumerRecord(String topic, int partition, long offset, long timestamp) {
         this.topic = topic;
@@ -18,7 +21,7 @@ public class ConsumerRecord<K, V> {
         this.timestamp = timestamp;
     }
 
-    public ConsumerRecord(String topic, int partition, long offset, long timestamp, K key, V value, Iterable<Header> headers) {
+    public ConsumerRecord(String topic, int partition, long offset, long timestamp, Optional<K> key, V value, Headers headers) {
         this.topic = topic;
         this.partition = partition;
         this.offset = offset;
@@ -33,7 +36,7 @@ public class ConsumerRecord<K, V> {
     }
 
     public K getKey() {
-        return this.key;
+        return key.orElse(null);
     }
 
     public long getOffset() {
@@ -64,7 +67,9 @@ public class ConsumerRecord<K, V> {
             StringBuilder headersString = new StringBuilder();
 
             for (Header header : this.headers) {
-                headersString.append(header.toString());
+                if (header != null) {
+                    headersString.append(header.toString());
+                }
             }
 
             stringBuffer.append("Headers: ").append(headersString);
