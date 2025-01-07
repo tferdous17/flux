@@ -33,21 +33,26 @@ public class RecordAccumulator {
         // Single assumption
         int partition = 0;
         int baseOffset = 0;
+        try {
+            // Check if current batch exists or is full
+            if (currentBatch == null) {
+                Logger.info("Batch is full or not present. Creating a new batch.");
+                currentBatch = createBatch(partition, baseOffset);
 
-        // Check if current batch exists or is full
-        if (currentBatch == null) {
-            Logger.info("Batch is full or not present. Creating a new batch.");
-            currentBatch = createBatch(partition, baseOffset);
-
-            if (!currentBatch.append(serializedRecord)) {
-                throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
+                if (!currentBatch.append(serializedRecord)) {
+                    throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
+                }
+            }  // batch is full
+            else if(!currentBatch.append(serializedRecord)) {
+                Logger.info("Batch is full. Flushing current batch and creating a new one.");
+                flush(); // TODO: Missing flush() method
             }
-        }  // batch is full
-        else if(!currentBatch.append(serializedRecord)) {
-            flush(); // TODO: Missing flush() method
+            Logger.info("Record appended successfully.");
+
+        } catch(Exception e) {
+            Logger.error("Failed to append record: " + e.getMessage(), e);
         }
 
-        Logger.info("Record appended successfully.");
     }
 
     public RecordBatch getCurrentBatch() {
