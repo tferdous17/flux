@@ -41,37 +41,26 @@ public class Partition {
         return newSegment;
     }
 
-    private void appendRecordToSegment(byte[] record) {
-        activeSegment.setCurrentSizeInBytes(activeSegment.getCurrentSizeInBytes() + record.length);
-        int newOffset = currentOffset.incrementAndGet();
-        activeSegment.setEndOffset(newOffset);
 
-        Logger.debug("Appended record at offset {}", newOffset - 1);
-    }
-
-    // Had to switch implementation of this since getBatch method deleted
     public int appendRecordBatch(RecordBatch batch) throws IOException {
         if (batch == null || batch.getRecordCount() == 0 || batch.getCurrBatchSizeInBytes() == 0) {
             throw new IllegalArgumentException("Batch is empty");
         }
-
         int batchStartOffset = currentOffset.get();
-        ByteBuffer batchBuffer = batch.getBatchBuffer();
 
-        while (batchBuffer.hasRemaining()) {
-            // I am Assuming each record is of a known size or can be deserialized from the buffer
-            byte[] record = new byte[batchBuffer.remaining()];
-            batchBuffer.get(record);  // Extract the record
-
-            if (!canAppendRecordToSegment(record)) {
-                activeSegment = createNewSegment();
-            }
-            appendRecordToSegment(record);
+        if (activeSegment != null) {
+            activeSegment.writeBatchToSegment(batch);
+        } else {
+            activeSegment = createNewSegment();
+            activeSegment.writeBatchToSegment(batch);
         }
+        // Update the offset after writing the batch
         currentOffset.addAndGet(batch.getRecordCount());
+
         Logger.info("Successfully appended {} records starting at offset {}", batch.getRecordCount(), batchStartOffset);
 
         return batchStartOffset;
+
     }
 
     public int getCurrentOffset() {
