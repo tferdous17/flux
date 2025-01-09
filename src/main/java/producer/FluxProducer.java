@@ -2,11 +2,12 @@ package producer;
 
 import commons.header.Properties;
 
+import java.io.IOException;
 import java.util.Map;
 
 public class FluxProducer<K, V> implements Producer {
     private Map<String, String> configs;
-    // TODO: Include RecordAccumulator once implemented
+    RecordAccumulator recordAccumulator = new RecordAccumulator();
 
     public FluxProducer(Map<String, String> configs) {
         this.configs = configs;
@@ -17,12 +18,13 @@ public class FluxProducer<K, V> implements Producer {
     }
 
     @Override
-    public void send(ProducerRecord record) {
-        // TODO: implementation of this method depends on RecordAccumulator to be done
+    public void send(ProducerRecord record) throws IOException {
+        byte[] serializedData = ProducerRecordCodec.serialize(record, record.getKey().getClass(), record.getValue().getClass());
+        recordAccumulator.append(serializedData);
     }
 
     @Override
     public void close() {
-
+        //TODO: RecordAccumulator should flush any remaining records
     }
 }

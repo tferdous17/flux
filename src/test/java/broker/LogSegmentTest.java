@@ -19,7 +19,7 @@ public class LogSegmentTest {
 
     @Test
     public void overloadedLogSegmentConstructorTest() throws IOException {
-        LogSegment logSegment = new LogSegment(0,1,231L);
+        LogSegment logSegment = new LogSegment(0,1, 231);
         System.out.println(logSegment);
     }
 
