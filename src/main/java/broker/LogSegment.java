@@ -9,6 +9,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -18,26 +20,70 @@ import java.nio.file.StandardOpenOption;
 public class LogSegment {
     private final int partitionNumber;
     private File logFile; // stores the records
+    private File indexFile;
     private boolean isActive; // if isActive is true, the segment is mutable
     private int segmentThresholdInBytes =  1_048_576; // log segment cannot exceed this size threshold (default: 1 MB)
     private int currentSizeInBytes;
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
+    private IndexEntries entries;
+
+    /**
+     * Represents a Record Offset --> Byte Offset pair
+     * NOTE: Full implementation depends on global record offset management to be implemented
+     */
+    private class IndexEntries {
+        public Map<Integer, Integer> recordOffsetToByteOffsets;
+        private final int flushThreshold = 5; // test value, can adjust as needed
+
+        public IndexEntries() {
+            recordOffsetToByteOffsets = new HashMap<>();
+        }
+
+        // creates new entry and also handles automatic flushing
+        public void createNewEntry(int recordOffset, int byteOffset) {
+            recordOffsetToByteOffsets.put(recordOffset, byteOffset);
+            if (recordOffsetToByteOffsets.size() >= flushThreshold) {
+                try {
+                    flushIndexEntries();
+                    recordOffsetToByteOffsets.clear();
+                }
+                catch (IOException e) {
+                    Logger.error("Error when flushing index entries.");
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        public void flushIndexEntries() throws IOException {
+            // 8 bytes per entry (4 for record offset, 4 for byte offset)
+            int numOfOffsetPairs = recordOffsetToByteOffsets.size();
+            ByteBuffer buffer = ByteBuffer.allocate(numOfOffsetPairs * 8);
+
+            recordOffsetToByteOffsets.forEach((recOffset, byteOffset) -> {
+                buffer.putInt(recOffset);
+                buffer.putInt(byteOffset);
+            });
+
+            Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
+        }
+    }
 
     public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
+        entries = new IndexEntries();
 
         try {
             // ex: partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
-            this.logFile = new File(String.format("./data/partition%d_%05d.log", this.partitionNumber, this.startOffset));
-            if (this.logFile.createNewFile()) {
-                Logger.info(String.format("File created: %s%n", this.logFile.getPath()));
-            } else {
-                Logger.warn(String.format("File %s already exists", this.logFile.getPath()));
-            }
+            String logFileName = String.format("./data/partition%d_%05d.log", this.partitionNumber, this.startOffset);
+            String indexFileName = String.format("./data/partition%d_%05d.index", this.partitionNumber, this.startOffset);
+
+            this.logFile = createFile(logFileName);
+            this.indexFile = createFile(indexFileName);
+
         } catch (IOException e) {
-            Logger.error("IOException occurred while creating LogSegment file.");
+            Logger.error("IOException occurred while creating LogSegment files.");
             throw e;
         }
 
@@ -49,6 +95,21 @@ public class LogSegment {
     public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
+    }
+
+    // Helper method
+    private File createFile(String fileName) throws IOException {
+        File file = new File(fileName);
+        try {
+            if (file.createNewFile()) {
+                Logger.info("File created: " + file.getPath());
+            } else {
+                Logger.warn("File already exists: " + file.getPath());
+            }
+        } catch (IOException e) {
+            throw e;
+        }
+        return file;
     }
 
     public boolean shouldBeImmutable() {
@@ -75,6 +136,7 @@ public class LogSegment {
             return;
         }
 
+
         // grab the buffer and throw the occupied space in the buffer to a byte arr that will be written to disk
         ByteBuffer buffer = batch.getBatchBuffer().flip();
         byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
@@ -99,6 +161,10 @@ public class LogSegment {
         return logFile;
     }
 
+    public File getIndexFile() {
+        return indexFile;
+    }
+
     public int getPartitionNumber() {
         return partitionNumber;
     }
@@ -117,19 +183,7 @@ public class LogSegment {
 
     public int getEndOffset() {
         return endOffset;
-    }
 
-    public void setLogFile(File logFile) {this.logFile = logFile;}
-
-    public void setActive(boolean active) {isActive = active;}
-
-    public void setSegmentThresholdInBytes(int segmentThresholdInBytes) {this.segmentThresholdInBytes = segmentThresholdInBytes;}
-
-    public void setCurrentSizeInBytes(int currentSizeInBytes) {this.currentSizeInBytes = currentSizeInBytes;}
-
-    public void setStartOffset(int startOffset) {this.startOffset = startOffset;}
-
-    public void setEndOffset(int endOffset) {this.endOffset = endOffset;}
 
     @Override
     public String toString() {
