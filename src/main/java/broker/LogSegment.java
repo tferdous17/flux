@@ -183,11 +183,7 @@ public class LogSegment {
 
     public int getEndOffset() {
         return endOffset;
-    }
 
-    public IndexEntries getEntries() {
-        return entries;
-    }
 
     @Override
     public String toString() {
