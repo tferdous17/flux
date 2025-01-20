@@ -183,7 +183,7 @@ public class LogSegment {
 
     public int getEndOffset() {
         return endOffset;
-
+    }
 
     @Override
     public String toString() {
@@ -194,7 +194,7 @@ public class LogSegment {
                 ", \nsegmentThresholdInBytes=" + segmentThresholdInBytes +
                 ", \ncurrentSizeInBytes=" + currentSizeInBytes +
                 ", \nstartOffset=" + startOffset +
-                ", \nendOffset=" + endOffset +
+                ", \nendOffset=" + getEndOffset() +
                 '}';
     }
 }
