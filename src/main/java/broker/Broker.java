@@ -27,12 +27,13 @@ public class Broker {
         this.partition = new Partition(1);
     }
 
+    // TODO: Implement proper Broker start() once gRPC implemented
     public boolean start() {
         // starts the server via gRPC
         return true;
     }
 
-    // mock implementation for now until gRPC implemented
+    // TODO: Replace mock implementation when gRPC is implemented
     public void produceMessages(RecordBatch batch) throws IOException {
         partition.appendRecordBatch(batch);
         Logger.info("Appended record batch to broker.");
