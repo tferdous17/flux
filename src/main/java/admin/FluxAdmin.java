@@ -31,6 +31,7 @@ public class FluxAdmin implements Admin {
         return instance;
     }
 
+    // TODO: Implement createTopic properly when we have support for multiple partitions and topics
     @Override
     public void createTopic(String name, int numPartitions) {
         // ! This method is just a mock. When we support topics and 2+ partitions, it will get implemented properly
@@ -41,6 +42,7 @@ public class FluxAdmin implements Admin {
         Logger.info(String.format("Topic created with name %s and %d partitions", name, numPartitions));
     }
 
+    // TODO: Properly implement increasePartitions when we have support for multiple partitions
     @Override
     public void increasePartitions(String topicName, int partitionCount) {
         if (!this.topics.containsKey(topicName)) {
