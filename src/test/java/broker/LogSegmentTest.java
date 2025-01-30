@@ -25,7 +25,7 @@ public class LogSegmentTest {
 
     @Test
     public void writeBatchToSegmentTest() throws IOException {
-        LogSegment segment = new LogSegment(0, 0);
+        LogSegment segment = new LogSegment(0, 0, 231);
         RecordBatch batch = new RecordBatch();
 
         // append fake data
