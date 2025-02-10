@@ -194,7 +194,7 @@ public class LogSegment {
                 ", \nsegmentThresholdInBytes=" + segmentThresholdInBytes +
                 ", \ncurrentSizeInBytes=" + currentSizeInBytes +
                 ", \nstartOffset=" + startOffset +
-                ", \nendOffset=" + endOffset +
+                ", \nendOffset=" + getEndOffset() +
                 '}';
     }
 }
