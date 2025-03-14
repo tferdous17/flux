@@ -41,6 +41,14 @@ public class Partition {
         return newSegment;
     }
 
+    public void appendSingleRecord(byte[] record) throws IOException {
+        if (activeSegment == null) {
+            activeSegment = createNewSegment();
+        }
+        activeSegment.writeRecordToSegment(record);
+        Logger.info("Successfully appended record to offset");
+    }
+
 
     public int appendRecordBatch(RecordBatch batch) throws IOException {
         if (batch == null || batch.getRecordCount() == 0 || batch.getCurrBatchSizeInBytes() == 0) {
@@ -48,12 +56,11 @@ public class Partition {
         }
         int batchStartOffset = currentOffset.get();
 
-        if (activeSegment != null) {
-            activeSegment.writeBatchToSegment(batch);
-        } else {
+        if (activeSegment == null) {
             activeSegment = createNewSegment();
-            activeSegment.writeBatchToSegment(batch);
         }
+        activeSegment.writeBatchToSegment(batch);
+
         // Update the offset after writing the batch
         currentOffset.addAndGet(batch.getRecordCount());
 

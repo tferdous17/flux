@@ -121,6 +121,24 @@ public class LogSegment {
         this.isActive = false;
     }
 
+    public void writeRecordToSegment(byte[] record) throws IOException {
+        if (shouldBeImmutable()) {
+            Logger.info("Log segment is now at capacity, setting as immutable.");
+            setAsImmutable();
+            return;
+        }
+        if (!isActive) {
+            Logger.warn("Batch is immutable, can not append.");
+            return;
+        }
+        if (this.currentSizeInBytes + record.length > segmentThresholdInBytes) {
+            Logger.warn("Size of record exceeds log segment threshold.");
+            return;
+        }
+
+        appendDataToLogFile(record);
+    }
+
     public void writeBatchToSegment(RecordBatch batch) throws IOException {
         if (shouldBeImmutable()) {
             Logger.info("Log segment is now at capacity, setting as immutable.");
@@ -142,13 +160,17 @@ public class LogSegment {
         byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
         buffer.get(occupiedData); // transfers bytes from buffer --> occupiedData
 
+        appendDataToLogFile(occupiedData);
+    }
+
+    private void appendDataToLogFile(byte[] data) throws IOException {
         try {
             // write occupied data to the log file
-            Files.write(Path.of(logFile.getPath()), occupiedData, StandardOpenOption.APPEND);
-            this.currentSizeInBytes += occupiedData.length;
-            Logger.info("Batch successfully written to segment.");
+            Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
+            this.currentSizeInBytes += data.length;
+            Logger.info("Data successfully written to segment.");
         } catch (IOException e) {
-            Logger.error("Failed to write batch to log segment.", e);
+            Logger.error("Failed to write data to log segment.", e);
             throw e;
         }
     }

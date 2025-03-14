@@ -17,10 +17,16 @@ public class FluxProducer<K, V> implements Producer {
         this.configs = props.getAllProperties();
     }
 
+    // Batching will be better for when Flux is distributed
     @Override
     public void send(ProducerRecord record) throws IOException {
         byte[] serializedData = ProducerRecordCodec.serialize(record, record.getKey().getClass(), record.getValue().getClass());
         recordAccumulator.append(serializedData);
+    }
+
+    // Send record directly to Broker w/o batching.
+    public void sendDirect(ProducerRecord record) {
+        byte[] serializedData = ProducerRecordCodec.serialize(record, record.getKey().getClass(), record.getValue().getClass());
     }
 
     @Override
