@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service PublishToBroker {
+  rpc Send(PublishDataToBrokerRequest) returns (BrokerToPublisherAck);
+}
+
+message PublishDataToBrokerRequest {
+  bytes data = 1;
+}
+
+message BrokerToPublisherAck {
+  string acknowledgement = 1;
+}
