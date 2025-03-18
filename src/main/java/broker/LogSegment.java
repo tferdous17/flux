@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
@@ -75,9 +76,11 @@ public class LogSegment {
         entries = new IndexEntries();
 
         try {
+            createDataFolder();
+
             // ex: partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
-            String logFileName = String.format("./data/partition%d_%05d.log", this.partitionNumber, this.startOffset);
-            String indexFileName = String.format("./data/partition%d_%05d.index", this.partitionNumber, this.startOffset);
+            String logFileName = String.format("data/partition%d_%05d.log", this.partitionNumber, this.startOffset);
+            String indexFileName = String.format("data/partition%d_%05d.index", this.partitionNumber, this.startOffset);
 
             this.logFile = createFile(logFileName);
             this.indexFile = createFile(indexFileName);
@@ -95,6 +98,28 @@ public class LogSegment {
     public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
         this(partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
+    }
+
+    private void createDataFolder() {
+        // Get the current working directory (project root in most cases)
+        String projectRoot = System.getProperty("user.dir");
+
+        // Define the path for the data folder at the same level as src
+        String dataFolderPath = Paths.get(projectRoot, "data").toString();
+
+        // Create a File object for the data folder
+        File dataFolder = new File(dataFolderPath);
+
+        // Check if the folder exists, create it if it doesn't
+        if (!dataFolder.exists()) {
+            try {
+                Files.createDirectories(Paths.get(dataFolderPath));
+            } catch (IOException e) {
+                throw new RuntimeException("Could not create data folder", e);
+            }
+        } else {
+            System.out.println("data/ folder already exists at: " + dataFolderPath);
+        }
     }
 
     // Helper method
