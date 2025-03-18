@@ -12,12 +12,14 @@ public class Broker {
     private int port; // ex: port 8080
     private int numPartitions = 1; // for now, we will only support 1 partition
     private Partition partition;
+    private int nextAvailOffset;
 
     public Broker() throws IOException {
         this.brokerId = "broker1";
         this.host = "localhost";
         this.port = 8080;
         this.partition = new Partition(1);
+        this.nextAvailOffset = 1;
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
@@ -37,6 +39,11 @@ public class Broker {
     public void produceMessages(RecordBatch batch) throws IOException {
         partition.appendRecordBatch(batch);
         Logger.info("Appended record batch to broker.");
+    }
+
+    public void produceSingleMessage(byte[] record) throws IOException {
+        partition.appendSingleRecord(record);
+        Logger.info("Appended record to broker.");
     }
 
     // TODO: Finish consumer infrastructure
