@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -190,14 +191,23 @@ public class LogSegment {
 
     private void appendDataToLogFile(byte[] data) throws IOException {
         try {
+            prependByteOffset(data);
+
             // write occupied data to the log file
             Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
+
             this.currentSizeInBytes += data.length;
             Logger.info("3. Data successfully written to segment.");
         } catch (IOException e) {
             Logger.error("Failed to write data to log segment.", e);
             throw e;
         }
+    }
+
+    private void prependByteOffset(byte[] data) {
+        // first 4 bytes are for the record offset, next 4 for byte offset
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        buffer.putInt(4, currentSizeInBytes);
     }
 
     public boolean isActive() {
