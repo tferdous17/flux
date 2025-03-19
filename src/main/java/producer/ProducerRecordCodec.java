@@ -11,11 +11,13 @@ import commons.serializers.HeadersSerializer;
 import commons.serializers.ProducerRecordSerializer;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Optional;
 
 public class ProducerRecordCodec {
     private static Kryo kryo;
     static final int INITIAL_BUFFER_SIZE = 4096;
+    static int headerSizeInBytes = Integer.BYTES;
 
     static {
         // All classes will share a single Kryo object.
@@ -35,14 +37,15 @@ public class ProducerRecordCodec {
         kryo.writeObject(output, record);
         output.close();
 
-        byte[] serializedData = output.getBuffer();
-        int dataSize = serializedData.length;
+        // only want the occupied space instead of the entire buffer which can contain empty space
+        byte[] serializedData = Arrays.copyOf(output.getBuffer(), output.position());
+        int recordSize = serializedData.length;
 
         // Both dataSize and offset are 4 bytes => 4 * 2 fields => 8 bytes = metadata size.
-        int metadataSize = Integer.BYTES * 2;
-        ByteBuffer completeRecordBuffer = ByteBuffer.allocate(metadataSize + dataSize); // Total size + offset
+//        int metadataSize = Integer.BYTES * 2;
+        ByteBuffer completeRecordBuffer = ByteBuffer.allocate(headerSizeInBytes + recordSize); // Total size + offset
 
-        completeRecordBuffer.putInt(dataSize);
+        completeRecordBuffer.putInt(recordSize);
         completeRecordBuffer.putInt(INITIAL_BUFFER_SIZE); // Offset (example: for simplicity, it's set to the buffer size)
         completeRecordBuffer.put(serializedData);
 
