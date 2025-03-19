@@ -193,7 +193,7 @@ public class LogSegment {
             // write occupied data to the log file
             Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
             this.currentSizeInBytes += data.length;
-            Logger.info("Data successfully written to segment.");
+            Logger.info("3. Data successfully written to segment.");
         } catch (IOException e) {
             Logger.error("Failed to write data to log segment.", e);
             throw e;

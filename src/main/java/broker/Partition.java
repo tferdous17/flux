@@ -46,7 +46,7 @@ public class Partition {
             activeSegment = createNewSegment();
         }
         activeSegment.writeRecordToSegment(record);
-        Logger.info("Successfully appended record to offset");
+        Logger.info("2. Successfully appended record to active segment");
     }
 
 

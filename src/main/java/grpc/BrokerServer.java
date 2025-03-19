@@ -10,6 +10,7 @@ import proto.PublishDataToBrokerRequest;
 import proto.PublishToBrokerGrpc;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -75,8 +76,7 @@ public class BrokerServer {
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             byte[] data = req.getData().toByteArray();
-            System.out.println("we got the data: " + data);
-
+            System.out.println(Arrays.toString(req.getData().toByteArray()));
             try {
                 broker.produceSingleMessage(data);
             } catch (IOException e) {
@@ -85,7 +85,7 @@ public class BrokerServer {
 
             BrokerToPublisherAck ack = BrokerToPublisherAck
                     .newBuilder()
-                    .setAcknowledgement(System.out.printf("DATA %b BEEN RECEIVED", req.getData()).toString())
+                    .setAcknowledgement("DATA BEEN RECEIVED: " + req.getData())
                     .build();
 
             responseObserver.onNext(ack); // this just sends the response back to the client
