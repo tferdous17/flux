@@ -5,6 +5,7 @@ import org.tinylog.Logger;
 import producer.RecordBatch;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class Broker {
     private String brokerId;
@@ -19,7 +20,7 @@ public class Broker {
         this.host = "localhost";
         this.port = 50051;
         this.partition = new Partition(1);
-        this.nextAvailOffset = 1;
+        this.nextAvailOffset = 0;
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
@@ -36,6 +37,12 @@ public class Broker {
     }
 
     public void produceSingleMessage(byte[] record) throws IOException {
+        // now need to handle record offsets meow :3
+        // perhaps I should have some bytes in the header for record offset
+        ByteBuffer buffer = ByteBuffer.wrap(record);
+        buffer.putInt(0, nextAvailOffset);
+        nextAvailOffset++;
+
         partition.appendSingleRecord(record);
         Logger.info("1. Appended record to broker.");
     }

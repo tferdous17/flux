@@ -10,7 +10,6 @@ import proto.PublishDataToBrokerRequest;
 import proto.PublishToBrokerGrpc;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -76,7 +75,7 @@ public class BrokerServer {
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             byte[] data = req.getData().toByteArray();
-            System.out.println(Arrays.toString(req.getData().toByteArray()));
+
             try {
                 broker.produceSingleMessage(data);
             } catch (IOException e) {
