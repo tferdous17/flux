@@ -15,9 +15,9 @@ public class Broker {
     private int nextAvailOffset;
 
     public Broker() throws IOException {
-        this.brokerId = "broker1";
+        this.brokerId = "BROKER-1";
         this.host = "localhost";
-        this.port = 8080;
+        this.port = 50051;
         this.partition = new Partition(1);
         this.nextAvailOffset = 1;
     }
@@ -29,12 +29,6 @@ public class Broker {
         this.partition = new Partition(1);
     }
 
-    // TODO: Implement proper Broker start() once gRPC implemented
-    public boolean start() {
-        // starts the server via gRPC
-        return true;
-    }
-
     // TODO: Replace mock implementation when gRPC is implemented
     public void produceMessages(RecordBatch batch) throws IOException {
         partition.appendRecordBatch(batch);
@@ -43,7 +37,7 @@ public class Broker {
 
     public void produceSingleMessage(byte[] record) throws IOException {
         partition.appendSingleRecord(record);
-        Logger.info("Appended record to broker.");
+        Logger.info("1. Appended record to broker.");
     }
 
     // TODO: Finish consumer infrastructure
