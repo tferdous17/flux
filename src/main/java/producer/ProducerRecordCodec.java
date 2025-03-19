@@ -5,10 +5,7 @@ import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import commons.header.Header;
 import commons.headers.Headers;
-import commons.serializers.OptionalSerializer;
-import commons.serializers.HeaderSerializer;
-import commons.serializers.HeadersSerializer;
-import commons.serializers.ProducerRecordSerializer;
+import commons.serializers.*;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -17,7 +14,7 @@ import java.util.Optional;
 public class ProducerRecordCodec {
     private static Kryo kryo;
     static final int INITIAL_BUFFER_SIZE = 4096;
-    static int headerSizeInBytes = Integer.BYTES;
+    static int headerSizeInBytes = Integer.BYTES * 3;
 
     static {
         // All classes will share a single Kryo object.
@@ -41,13 +38,13 @@ public class ProducerRecordCodec {
         byte[] serializedData = Arrays.copyOf(output.getBuffer(), output.position());
         int recordSize = serializedData.length;
 
-        // Both dataSize and offset are 4 bytes => 4 * 2 fields => 8 bytes = metadata size.
-//        int metadataSize = Integer.BYTES * 2;
-        ByteBuffer completeRecordBuffer = ByteBuffer.allocate(headerSizeInBytes + recordSize); // Total size + offset
+        // Both byteOffset and recordSize are 4 bytes => 4 * 2 fields => 8 bytes = header size.
+        ByteBuffer completeRecordBuffer = ByteBuffer.allocate(headerSizeInBytes + recordSize);
 
-        completeRecordBuffer.putInt(recordSize);
-        completeRecordBuffer.putInt(INITIAL_BUFFER_SIZE); // Offset (example: for simplicity, it's set to the buffer size)
-        completeRecordBuffer.put(serializedData);
+        completeRecordBuffer.putInt(0); // first 4 bytes for record offset
+        completeRecordBuffer.putInt(0); // next 4 bytes for the byte offset (will fill in on Broker side)
+        completeRecordBuffer.putInt(recordSize); // next 4 bytes are record size
+        completeRecordBuffer.put(serializedData); // rest is data
 
         return completeRecordBuffer.array();
     }
@@ -55,11 +52,12 @@ public class ProducerRecordCodec {
     public static <K, V> ProducerRecord<K, V> deserialize(byte[] data, Class<K> keyClass, Class<V> valueClass) {
         // Read metadata
         ByteBuffer buffer = ByteBuffer.wrap(data);
-        int dataSize = buffer.getInt();
-        int offset = buffer.getInt(); // For future use, e.g., key and value offsets
+        int recordOffset = buffer.getInt();
+        int byteOffset = buffer.getInt();
+        int recordSize = buffer.getInt();
 
-        byte[] recordData = new byte[dataSize];
-        buffer.get(recordData);
+        byte[] recordData = new byte[recordSize];
+        buffer.get(headerSizeInBytes, recordData);
 
         // Dynamically register the types (K, V) of Producer Record
         kryo.register(keyClass);
