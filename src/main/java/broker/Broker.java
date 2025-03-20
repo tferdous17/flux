@@ -13,7 +13,7 @@ public class Broker {
     private int port; // ex: port 8080
     private int numPartitions = 1; // for now, we will only support 1 partition
     private Partition partition;
-    private int nextAvailOffset;
+    private int nextAvailOffset; // record offsets
 
     public Broker() throws IOException {
         this.brokerId = "BROKER-1";
@@ -36,15 +36,18 @@ public class Broker {
         Logger.info("Appended record batch to broker.");
     }
 
-    public void produceSingleMessage(byte[] record) throws IOException {
-        // now need to handle record offsets meow :3
-        // perhaps I should have some bytes in the header for record offset
+    public int produceSingleMessage(byte[] record) throws IOException {
+        // throw record offset into the header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
         buffer.putInt(0, nextAvailOffset);
+
+        int currRecordOffset = nextAvailOffset;
         nextAvailOffset++;
 
         partition.appendSingleRecord(record);
         Logger.info("1. Appended record to broker.");
+
+        return currRecordOffset;
     }
 
     // TODO: Finish consumer infrastructure
