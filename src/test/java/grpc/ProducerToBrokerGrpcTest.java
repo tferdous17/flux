@@ -42,10 +42,13 @@ public class ProducerToBrokerGrpcTest {
     private static void startClient() {
         FluxProducer<String, String> producer = new FluxProducer<>();
         ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-value");
+        ProducerRecord<String, String> record2 = new ProducerRecord<>("test-topic2", "test-value2");
+        ProducerRecord<String, String> record3 = new ProducerRecord<>("test-topic3", "test-value3");
 
         try {
             producer.sendDirect(record);
-            System.out.println("Message sent");
+            producer.sendDirect(record2);
+            producer.sendDirect(record3);
         } catch (IOException e) {
             System.out.println(e.getMessage());
         }

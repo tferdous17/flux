@@ -10,7 +10,7 @@ public class FluxProducerTest {
     public void mapConstructorTest() {
         Map<String, String> configs = new HashMap<>();
         configs.put("sample-key", "same-value");
-        FluxProducer<String, String> fluxProducer = new FluxProducer<>(configs);
+        FluxProducer<String, String> fluxProducer = new FluxProducer<>();
         System.out.println(fluxProducer);
     }
 }
