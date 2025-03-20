@@ -11,6 +11,14 @@ message PublishDataToBrokerRequest {
   bytes data = 1;
 }
 
+enum Status {
+  SUCCESS = 0;
+  TRANSIENT_FAILURE = 1; // aka temporary failure
+  PERMANENT_FAILURE = 2;
+}
+
 message BrokerToPublisherAck {
   string acknowledgement = 1;
+  Status status = 2;
+  int32 recordOffset = 3;
 }

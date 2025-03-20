@@ -8,6 +8,7 @@ import io.grpc.stub.StreamObserver;
 import proto.BrokerToPublisherAck;
 import proto.PublishDataToBrokerRequest;
 import proto.PublishToBrokerGrpc;
+import proto.Status;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -74,20 +75,26 @@ public class BrokerServer {
 
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
+            BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
             byte[] data = req.getData().toByteArray();
 
             try {
-                broker.produceSingleMessage(data);
+                int recordOffset = broker.produceSingleMessage(data);
+                ackBuilder
+                    .setAcknowledgement("ACK: Data received successfully.")
+                    .setStatus(Status.SUCCESS)
+                    .setRecordOffset(recordOffset);
+
             } catch (IOException e) {
-                responseObserver.onError(e);
+                // will need logic in the future to differentiate between transient and permanent failures
+                // producer will need to explicitly handle these failures and possibly retry
+                 ackBuilder
+                        .setAcknowledgement("ERR: " + e.getMessage())
+                        .setStatus(Status.TRANSIENT_FAILURE)
+                        .setRecordOffset(-1);
             }
 
-            BrokerToPublisherAck ack = BrokerToPublisherAck
-                    .newBuilder()
-                    .setAcknowledgement("DATA BEEN RECEIVED: " + req.getData())
-                    .build();
-
-            responseObserver.onNext(ack); // this just sends the response back to the client
+            responseObserver.onNext(ackBuilder.build()); // this just sends the response back to the client
             responseObserver.onCompleted(); // lets the client know there are no more messages after this
         }
     }
