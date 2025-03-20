@@ -32,6 +32,7 @@ public class FluxProducer<K, V> implements Producer {
     public void sendDirect(ProducerRecord record) throws IOException {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
+
         // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
         byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
         ByteString data = ByteString.copyFrom(serializedData);
@@ -51,7 +52,11 @@ public class FluxProducer<K, V> implements Producer {
             return;
         }
 
+        System.out.println("\n--------------------------------");
         System.out.println(response.getAcknowledgement());
+        System.out.println("Status: " + response.getStatus());
+        System.out.println("Record Offset: " + response.getRecordOffset());
+        System.out.println("--------------------------------\n");
     }
 
     @Override

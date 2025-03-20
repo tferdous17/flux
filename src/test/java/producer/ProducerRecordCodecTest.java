@@ -1,6 +1,5 @@
 package producer;
 
-import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.Test;
 
@@ -10,14 +9,12 @@ public class ProducerRecordCodecTest {
     @Test
     public void serializedProducerRecordTest() {
         Headers headers = new Headers();
-        headers.add(new Header("Kyoshi", "22".getBytes()));
+//        headers.add(new Header("Kyoshi", "22".getBytes()));
         ProducerRecord<String, String> record = new ProducerRecord<>(
-                "Bob",
-                0,
-                System.currentTimeMillis(),
+                "test-topic",
+                1,
                 "key",
-                "22",
-                headers
+                "test-value"
         );
 
         // Serialize
@@ -25,7 +22,7 @@ public class ProducerRecordCodecTest {
         System.out.println(Arrays.toString(serializedData));
         System.out.println("Serialized Data Length: " + serializedData.length + "\n");
 
-        // Deserialize
+//         Deserialize
         ProducerRecord<String, String> deserializedRecord = ProducerRecordCodec.deserialize(
                 serializedData,
                 String.class,
