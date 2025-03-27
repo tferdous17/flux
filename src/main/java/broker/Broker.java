@@ -3,6 +3,7 @@ package broker;
 import consumer.ConsumerRecord;
 import org.tinylog.Logger;
 import producer.RecordBatch;
+import proto.Message;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -44,15 +45,16 @@ public class Broker {
         int currRecordOffset = nextAvailOffset;
         nextAvailOffset++;
 
-        partition.appendSingleRecord(record);
+        partition.appendSingleRecord(record, currRecordOffset);
         Logger.info("1. Appended record to broker.");
 
         return currRecordOffset;
     }
 
     // TODO: Finish consumer infrastructure
-    public ConsumerRecord consumeMessage() {
-        return null;
+    public Message consumeMessage(int startingOffset) throws IOException {
+        // peer into the partition and fetch the data at this particular offset
+        return partition.getRecordAtOffset(startingOffset);
     }
 
     public String getBrokerId() {

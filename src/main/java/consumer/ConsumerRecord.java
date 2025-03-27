@@ -7,26 +7,26 @@ import java.util.Optional;
 
 public class ConsumerRecord<K, V> {
     private String topic;
-    private int partition;
+    private Optional<Integer> partition;
     private long offset;
     private long timestamp;
-    private Optional<K> key = null;
+    private Optional<K> key = Optional.empty();
     private V value;
     private Headers headers;
 
-    public ConsumerRecord(String topic, int partition, long offset, long timestamp) {
+    public ConsumerRecord(String topic, Integer partition, long offset, long timestamp) {
         this.topic = topic;
-        this.partition = partition;
+        this.partition = Optional.of(partition);
         this.offset = offset;
         this.timestamp = timestamp;
     }
 
-    public ConsumerRecord(String topic, int partition, long offset, long timestamp, Optional<K> key, V value, Headers headers) {
+    public ConsumerRecord(String topic, Integer partition, long offset, long timestamp, K key, V value, Headers headers) {
         this.topic = topic;
-        this.partition = partition;
+        this.partition = Optional.of(partition);;
         this.offset = offset;
         this.timestamp = timestamp;
-        this.key = key;
+        this.key = Optional.of(key);
         this.value = value;
         this.headers = headers;
     }
@@ -44,7 +44,7 @@ public class ConsumerRecord<K, V> {
     }
 
     public int getPartition() {
-        return this.partition;
+        return partition.orElse(-1);
     }
 
     public long getTimestamp() {
@@ -72,11 +72,10 @@ public class ConsumerRecord<K, V> {
                 }
             }
 
-            stringBuffer.append("Headers: ").append(headersString);
+            stringBuffer.append("Headers: ").append(headersString).append("\n");
         }
 
         stringBuffer
-
                 .append("Topic: ").append(String.valueOf(getTopic())).append("\n")
                 .append("Timestamp: ").append(getTimestamp()).append("\n")
                 .append("Offset: ").append(getOffset()).append("\n")
