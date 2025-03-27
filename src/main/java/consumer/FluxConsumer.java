@@ -1,14 +1,25 @@
 package consumer;
 
+import commons.headers.Headers;
+import io.grpc.Grpc;
+import io.grpc.InsecureChannelCredentials;
+import io.grpc.ManagedChannel;
 import org.tinylog.Logger;
+import proto.*;
 
 import java.time.Duration;
+import java.util.Arrays;
 
-public class FluxConsumer<K, V> implements ConsumerInterface {
-/*
-    All of these methods below, need a gRPC implementation...
-    I will provide pseudocode given we don't have gRPC setup yet.
- */
+public class FluxConsumer<K, V> implements Consumer {
+    private final ConsumerServiceGrpc.ConsumerServiceBlockingStub blockingStub;
+    private ManagedChannel channel;
+    private int currentOffset = 0;
+
+    public FluxConsumer() {
+        channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
+        blockingStub = ConsumerServiceGrpc.newBlockingStub(channel);
+    }
+
     @Override
     public void subscribe(String partitionID) {
         //  Create a gRPC request to sub to a partitionID/ list of topics
@@ -46,29 +57,36 @@ public class FluxConsumer<K, V> implements ConsumerInterface {
     }
 
     @Override
-    public void fetchMessage(Duration timeout) {
-        // Create a gRPC  request to fetch messages
-        /*
-        FetchRequest request = FetchRequest.newBuilder()
-            .setConsumerId(this.consumerId)
-            .setTimeoutMs(timeout.toMillis())
-            .build();
-         */
+    public void poll(Duration timeout) {
+        FetchMessageRequest req = FetchMessageRequest
+                .newBuilder()
+                .setStartingOffset(currentOffset)
+                .build();
 
-        // Sends a request to broker
-        //  FetchResponse response = brokerStub.fetch(request);
+        FetchMessageResponse response;
+        try {
+            // now handle response and deserialize it
+            response = blockingStub.fetchMessage(req);
+            Message msg = response.getMessage();
+            if (msg == null) {
+                System.out.println("No more messages to read.");
+            }
+            ConsumerRecord<String, String> record = new ConsumerRecord<>(
+                    msg.getTopic(),
+                    msg.getPartition(),
+                    msg.getOffset(),
+                    msg.getTimestamp(),
+                    msg.getKey(),
+                    msg.getValue(),
+                    new Headers()
+            );
 
-        // Convert gRPC response to list of messages
-        /*
-        List<Message<K, V>> messages = new ArrayList<>();
-        for (MessageProto messageProto : response.getMessagesList()) {
-            messages.add(convertFromProto(messageProto)); // Helper method to convert proto to your Message class
+            System.out.println("\nPRINTING CONSUMER RECORD: \n" + record + "\n");
+            currentOffset++;
+        } catch (Exception e) {
+            System.out.println(e.getMessage());
+            return;
         }
-
-        return messages;
-         */
-
-        Logger.info("We got messages!");
     }
 
     @Override
