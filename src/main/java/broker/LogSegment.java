@@ -1,11 +1,18 @@
 package broker;
 
+import com.google.protobuf.ByteString;
+import consumer.ConsumerRecord;
 import org.tinylog.Logger;
+import producer.ProducerRecord;
+import producer.ProducerRecordCodec;
 import producer.RecordBatch;
+import proto.Message;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -36,7 +43,7 @@ public class LogSegment {
      */
     private class IndexEntries {
         public Map<Integer, Integer> recordOffsetToByteOffsets;
-        private final int flushThreshold = 5; // test value, can adjust as needed
+        private final int flushThreshold = 100; // note: contents will be empty after hitting this threshold
 
         public IndexEntries() {
             recordOffsetToByteOffsets = new HashMap<>();
@@ -130,6 +137,8 @@ public class LogSegment {
             if (file.createNewFile()) {
                 Logger.info("File created: " + file.getPath());
             } else {
+                // wipes existing content
+                Files.write(Paths.get(fileName), "".getBytes());
                 Logger.warn("File already exists: " + file.getPath());
             }
         } catch (IOException e) {
@@ -147,7 +156,7 @@ public class LogSegment {
         this.isActive = false;
     }
 
-    public void writeRecordToSegment(byte[] record) throws IOException {
+    public void writeRecordToSegment(byte[] record, int currRecordOffset) throws IOException {
         if (shouldBeImmutable()) {
             Logger.info("Log segment is now at capacity, setting as immutable.");
             setAsImmutable();
@@ -162,7 +171,64 @@ public class LogSegment {
             return;
         }
 
+        // store entry before modifying bytes first
+        this.entries.createNewEntry(currRecordOffset, currentSizeInBytes);
         appendDataToLogFile(record);
+    }
+
+    public Message getRecordFromSegmentAtOffset(int recordOffset) throws IOException {
+        System.out.println("Offsets contents: " + entries.recordOffsetToByteOffsets.entrySet());
+        if (!entries.recordOffsetToByteOffsets.containsKey(recordOffset)) {
+            System.out.println("Key = " + recordOffset);
+            System.err.println("Record not found: " + recordOffset);
+            return null;
+        }
+        if (recordOffset > this.endOffset) {
+            System.out.println("No more records to read");
+            return null;
+        }
+
+        int byteOffset = entries.recordOffsetToByteOffsets.get(recordOffset);
+        System.out.println("RECORD OFFSET = " + recordOffset + " | CORRES. BYTE OFFSET = " + byteOffset);
+        // !!! NOTE: RETURNS EMPTY IF THE LOG FILES ARE NOT YET CREATED. HANDLE THIS LATER
+        try (RandomAccessFile raf = new RandomAccessFile(logFile.getPath(), "r")) {
+            System.out.println("BYTE OFFSET: " + byteOffset);
+            raf.seek(byteOffset);
+
+            byte[] header = new byte[12];
+            int bytesRead = raf.read(header);
+            System.out.println("HEADER: " + Arrays.toString(header));
+
+            ByteBuffer buffer = ByteBuffer.wrap(header);
+            int recordSize = buffer.getInt(8);
+
+            System.out.println("RECORD SIZE: " + recordSize);
+
+            raf.seek(byteOffset);
+            byte[] data = new byte[recordSize + 12];
+            raf.read(data);
+
+            System.out.println("PRINTING DATA: " + Arrays.toString(data));
+
+            // deserialize into producer rec first so we can get the fields
+            ProducerRecord<String, String> rec = ProducerRecordCodec.deserialize(
+                    data,
+                    String.class,
+                    String.class
+            );
+
+            Message msg = Message
+                    .newBuilder()
+                    .setTopic(rec.getTopic())
+                    .setPartition(rec.getPartitionNumber() == null ? 1 : rec.getPartitionNumber())
+                    .setOffset(recordOffset)
+                    .setTimestamp(rec.getTimestamp())
+                    .setKey(rec.getKey() == null ? "" : rec.getKey())
+                    .setValue(rec.getValue()).buildPartial();
+
+            System.out.println("\nPRINTING DESERIALIZED PRODREC---------- \n" + rec + "\n");
+            return msg;
+        }
     }
 
     public void writeBatchToSegment(RecordBatch batch) throws IOException {
@@ -180,7 +246,6 @@ public class LogSegment {
             return;
         }
 
-
         // grab the buffer and throw the occupied space in the buffer to a byte arr that will be written to disk
         ByteBuffer buffer = batch.getBatchBuffer().flip();
         byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
@@ -196,7 +261,13 @@ public class LogSegment {
             // write occupied data to the log file
             Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
 
+            System.out.println("-----------------------------------------------PRINTING ALL BYTE DATA IN FILE-----------------------------------------------");
+            byte[] testData = Files.readAllBytes(Path.of(logFile.getPath()));
+            System.out.println(Arrays.toString(testData));
+            System.out.println("-----------------------------------------------END OF PRINTING ALL BYTE DATA IN FILE-----------------------------------------------");
+
             this.currentSizeInBytes += data.length;
+            this.endOffset++;
             Logger.info("3. Data successfully written to segment.");
         } catch (IOException e) {
             Logger.error("Failed to write data to log segment.", e);

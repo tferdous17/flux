@@ -13,12 +13,12 @@ public class ConsumerRecordTest {
     int partition = 1;
     long offset = 1;
     long timestamp = 1704067200;
-    Optional<String> key = Optional.of("key");
+    String key = "key";
     String value = "value";
     Header header1 = new Header("Key1", "Value1".getBytes());
     Header header2 = new Header("Key2", "Value2".getBytes());
     Headers headers = new Headers();
-    ConsumerRecord<String, String> cr = new ConsumerRecord<String, String>(topic, partition, offset, timestamp, key, value, headers);
+    ConsumerRecord<String, String> cr = new ConsumerRecord<>(topic, partition, offset, timestamp, key, value, headers);
 
     @Test
     public void testGetHeaders() {
