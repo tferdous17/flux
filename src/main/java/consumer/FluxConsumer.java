@@ -1,5 +1,6 @@
 package consumer;
 
+import commons.FluxExecutor;
 import commons.headers.Headers;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
@@ -15,14 +16,12 @@ import java.util.concurrent.*;
 
 public class FluxConsumer<K, V> implements Consumer {
     private final ConsumerServiceGrpc.ConsumerServiceBlockingStub blockingStub;
-    private ExecutorService executor;
     private ManagedChannel channel;
     private int currentOffset = 0;
 
     public FluxConsumer() {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = ConsumerServiceGrpc.newBlockingStub(channel);
-        executor = Executors.newSingleThreadExecutor();
     }
 
     @Override
@@ -71,7 +70,7 @@ public class FluxConsumer<K, V> implements Consumer {
 
         try {
             // push fetch message execution into worker thread
-            Future<FetchMessageResponse> future = executor.submit(() -> blockingStub.fetchMessage(req));
+            Future<FetchMessageResponse> future = FluxExecutor.getExecutorService().submit(() -> blockingStub.fetchMessage(req));
             // waits for task to complete for at most the given timeout
             FetchMessageResponse response = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
 
