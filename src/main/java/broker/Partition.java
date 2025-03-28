@@ -1,10 +1,12 @@
 package broker;
 import org.tinylog.Logger;
 import producer.RecordBatch;
+import proto.Message;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -16,8 +18,7 @@ public class Partition {
     private List<LogSegment> segments;
     private LogSegment activeSegment;
 
-
-    public Partition( int partitionId) throws IOException {
+    public Partition(int partitionId) throws IOException {
         this.log = new Log();
         this.partitionId = partitionId;
         this.currentOffset = new AtomicInteger(log.getLogEndOffset());
@@ -41,14 +42,21 @@ public class Partition {
         return newSegment;
     }
 
-    public void appendSingleRecord(byte[] record) throws IOException {
+    public void appendSingleRecord(byte[] record, int currRecordOffset) throws IOException {
         if (activeSegment == null) {
             activeSegment = createNewSegment();
         }
-        activeSegment.writeRecordToSegment(record);
+        activeSegment.writeRecordToSegment(record, currRecordOffset);
         Logger.info("2. Successfully appended record to active segment");
     }
 
+    public Message getRecordAtOffset(int recordOffset) throws IOException {
+        if (activeSegment == null) {
+            System.err.println("Segment is empty. Cannot get record.");
+            return null;
+        }
+        return activeSegment.getRecordFromSegmentAtOffset(recordOffset);
+    }
 
     public int appendRecordBatch(RecordBatch batch) throws IOException {
         if (batch == null || batch.getRecordCount() == 0 || batch.getCurrBatchSizeInBytes() == 0) {
@@ -67,7 +75,6 @@ public class Partition {
         Logger.info("Successfully appended {} records starting at offset {}", batch.getRecordCount(), batchStartOffset);
 
         return batchStartOffset;
-
     }
 
     public int getCurrentOffset() {
@@ -93,6 +100,7 @@ public class Partition {
     public void setLog(Log log) {
         this.log = log;
     }
+
     public List<LogSegment> getSegments() {
         return segments;
     }

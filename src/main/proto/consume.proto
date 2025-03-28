@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service ConsumerService {
+  rpc FetchMessage(FetchMessageRequest) returns (FetchMessageResponse);
+}
+
+message FetchMessageRequest {
+  // not gonna worry about partition id rn in single server model
+  int32 starting_offset = 1;
+}
+
+message FetchMessageResponse {
+  Message message = 1;
+  enum Status {
+    SUCCESS = 0;
+    FAILURE = 1;
+    READ_COMPLETION = 2;
+  }
+  Status status = 2;
+  int32 next_offset = 3; // to read from
+}
+
+message Message {
+  string topic = 1;
+  int32 partition = 2;
+  int32 offset = 3;
+  int64 timestamp = 4;
+  string key = 5;
+  string value = 6;
+}

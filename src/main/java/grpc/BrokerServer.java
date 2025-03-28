@@ -1,14 +1,12 @@
 package grpc;
 
 import broker.Broker;
+import com.google.protobuf.ByteString;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
-import proto.BrokerToPublisherAck;
-import proto.PublishDataToBrokerRequest;
-import proto.PublishToBrokerGrpc;
-import proto.Status;
+import proto.*;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +27,7 @@ public class BrokerServer {
         server = Grpc.newServerBuilderForPort(port, InsecureServerCredentials.create())
                 .executor(executor)
                 .addService(new PublishToBrokerImpl(this.broker))
+                .addService(new ConsumerServiceImpl(this.broker))
                 .build()
                 .start();
 
@@ -99,4 +98,40 @@ public class BrokerServer {
         }
     }
 
+    static class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImplBase {
+        Broker broker;
+        int nextOffset; // to read
+
+        public ConsumerServiceImpl(Broker broker) {
+            this.broker = broker;
+        }
+
+        @Override
+        public void fetchMessage(FetchMessageRequest req, StreamObserver<FetchMessageResponse> responseObserver) {
+            FetchMessageResponse.Builder responseBuilder = FetchMessageResponse.newBuilder();
+            nextOffset = req.getStartingOffset() + 1;
+            try {
+                Message msg = this.broker.consumeMessage(req.getStartingOffset());
+                if (msg != null) {
+                    responseBuilder
+                            .setMessage(msg)
+                            .setStatus(FetchMessageResponse.Status.SUCCESS)
+                            .setNextOffset(nextOffset);
+                    nextOffset++;
+                } else {
+                    // no more messages to read
+                    responseBuilder
+                            .setMessage(Message.newBuilder().getDefaultInstanceForType())
+                            .setStatus(FetchMessageResponse.Status.READ_COMPLETION)
+                            .setNextOffset(nextOffset);
+                }
+            } catch (IOException e) {
+                responseObserver.onError(e);
+            }
+
+            responseObserver.onNext(responseBuilder.build()); // this just sends the response back to the client
+            responseObserver.onCompleted(); // lets the client know there are no more messages after this
+
+        }
+    }
 }
