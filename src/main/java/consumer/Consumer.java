@@ -2,6 +2,7 @@ package consumer;
 
 import java.time.Duration;
 import java.util.Collection;
+import java.util.List;
 
 public interface Consumer {
 //    void assign(Collection<TopicPartition> partitions);
@@ -9,7 +10,7 @@ public interface Consumer {
 
     void unsubscribe(String partitionID);
 
-    void poll(Duration timeout);
+    PollResult poll(Duration timeout);
 
     void commit(String partitionID,  long offset);
 
