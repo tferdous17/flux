@@ -8,16 +8,21 @@ import org.tinylog.Logger;
 import proto.*;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.*;
 
 public class FluxConsumer<K, V> implements Consumer {
     private final ConsumerServiceGrpc.ConsumerServiceBlockingStub blockingStub;
+    private ExecutorService executor;
     private ManagedChannel channel;
     private int currentOffset = 0;
 
     public FluxConsumer() {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = ConsumerServiceGrpc.newBlockingStub(channel);
+        executor = Executors.newSingleThreadExecutor();
     }
 
     @Override
@@ -57,20 +62,24 @@ public class FluxConsumer<K, V> implements Consumer {
     }
 
     @Override
-    public void poll(Duration timeout) {
+    public PollResult poll(Duration timeout) {
+        List<ConsumerRecord<String, String>> records = new ArrayList<>();
         FetchMessageRequest req = FetchMessageRequest
                 .newBuilder()
                 .setStartingOffset(currentOffset)
                 .build();
 
-        FetchMessageResponse response;
         try {
-            // now handle response and deserialize it
-            response = blockingStub.fetchMessage(req);
-            Message msg = response.getMessage();
-            if (msg == null) {
-                System.out.println("No more messages to read.");
+            // push fetch message execution into worker thread
+            Future<FetchMessageResponse> future = executor.submit(() -> blockingStub.fetchMessage(req));
+            // waits for task to complete for at most the given timeout
+            FetchMessageResponse response = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+
+            if (response.getStatus().equals(FetchMessageResponse.Status.READ_COMPLETION)) {
+                return new PollResult(records, false);
             }
+
+            Message msg = response.getMessage();
             ConsumerRecord<String, String> record = new ConsumerRecord<>(
                     msg.getTopic(),
                     msg.getPartition(),
@@ -80,13 +89,21 @@ public class FluxConsumer<K, V> implements Consumer {
                     msg.getValue(),
                     new Headers()
             );
+            records.add(record);
+            currentOffset = msg.getOffset() + 1;
 
-            System.out.println("\nPRINTING CONSUMER RECORD: \n" + record + "\n");
-            currentOffset++;
-        } catch (Exception e) {
-            System.out.println(e.getMessage());
-            return;
+        } catch (TimeoutException e) {
+            // if no data fetched before timeout limit
+            Logger.info("Timeout waiting for message");
+            return new PollResult(records, true);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            System.err.println("Fetch failed: " + e.getCause().getMessage());
+            return new PollResult(records, false);
         }
+
+        return new PollResult(records, true);
     }
 
     @Override
