@@ -1,13 +1,16 @@
 package grpc;
 
 import broker.Broker;
+import consumer.ConsumerRecord;
 import consumer.FluxConsumer;
+import consumer.PollResult;
 import org.junit.jupiter.api.Test;
 import producer.FluxProducer;
 import producer.ProducerRecord;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 
 public class ConsumerServiceTest {
     @Test
@@ -47,20 +50,25 @@ public class ConsumerServiceTest {
         ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-value");
         ProducerRecord<String, String> record2 = new ProducerRecord<>("lsjkdfsadfkljopic234", "fvaluasdfae");
         ProducerRecord<String, String> record3 = new ProducerRecord<>("tasdlfhjwoeihjfsd", "34tgrvaadfasdflue");
-        ProducerRecord<String, String> record4 = new ProducerRecord<>("lkey123kdc234", "bruhe");
-        ProducerRecord<String, String> record5 = new ProducerRecord<>("recerecerecece", "34chinafle");
 
         try {
             producer.sendDirect(record);
             producer.sendDirect(record2);
             producer.sendDirect(record3);
-            producer.sendDirect(record4);
-            producer.sendDirect(record5);
-            consumer.poll(Duration.ofMillis(100));
-            consumer.poll(Duration.ofMillis(100));
-            consumer.poll(Duration.ofMillis(100));
-            consumer.poll(Duration.ofMillis(100));
-            consumer.poll(Duration.ofMillis(100)); // after 4 records we get an error...
+
+            // refer to KafkaConsumer for why the test is structured like this
+            // note: kafka does not have a defined way to stop polling, but flux does for convenience purposes
+            while (true) {
+                PollResult result = consumer.poll(Duration.ofMillis(100));
+                if (!result.shouldContinuePolling()) {
+                    break;
+                }
+                for (ConsumerRecord<String, String> rec : result.records()) {
+                    System.out.println(rec);
+                }
+            }
+
+
         } catch (IOException e) {
             System.out.println(e.getMessage());
         }
