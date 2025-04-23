@@ -1,5 +1,6 @@
 package broker;
 
+import commons.FluxExecutor;
 import org.tinylog.Logger;
 
 import java.io.File;
@@ -16,12 +17,14 @@ import java.util.Map;
  */
 public class IndexEntries {
     public Map<Integer, Integer> recordOffsetToByteOffsets;
-    private final int flushThreshold = 100; // note: contents will be empty after hitting this threshold
+    private final int flushThreshold = 3; // note: contents will be empty after hitting this threshold
     private File indexFile;
+    private int offsetPtr;
 
     public IndexEntries(File indexFile) {
         recordOffsetToByteOffsets = new HashMap<>();
         this.indexFile = indexFile;
+        offsetPtr = 0;
     }
 
     // creates new entry and also handles automatic flushing
@@ -44,11 +47,22 @@ public class IndexEntries {
         int numOfOffsetPairs = recordOffsetToByteOffsets.size();
         ByteBuffer buffer = ByteBuffer.allocate(numOfOffsetPairs * 8);
 
-        recordOffsetToByteOffsets.forEach((recOffset, byteOffset) -> {
-            buffer.putInt(recOffset);
-            buffer.putInt(byteOffset);
+        for (int i = offsetPtr; i < recordOffsetToByteOffsets.size(); i++) {
+            buffer.putInt(i);
+            buffer.putInt(recordOffsetToByteOffsets.get(i));
+        }
+
+        FluxExecutor.getExecutorService().submit(() -> {
+            try {
+                // note: BufferedOutputStream is a viable alternative here as well for Files.write()
+                Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
+
+                Logger.info("\u001B[32m" + "Index entry flush completed." + "\u001B[0m");
+                offsetPtr = recordOffsetToByteOffsets.size();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         });
 
-        Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
     }
 }
