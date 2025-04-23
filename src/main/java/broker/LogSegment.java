@@ -1,7 +1,6 @@
 package broker;
 
-import com.google.protobuf.ByteString;
-import consumer.ConsumerRecord;
+import commons.FluxExecutor;
 import org.tinylog.Logger;
 import producer.ProducerRecord;
 import producer.ProducerRecordCodec;
@@ -12,7 +11,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -20,6 +18,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 /**
  * A LogSegment is a component/storage unit that makes up a Flux Partition.
@@ -36,52 +36,32 @@ public class LogSegment {
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
     private IndexEntries entries;
+    private int flushThreshold = 100;
+    private ByteBuffer buffer = ByteBuffer.allocateDirect(flushThreshold);
+    private Accumulator accumulator;
 
-    /**
-     * Represents a Record Offset --> Byte Offset pair
-     * NOTE: Full implementation depends on global record offset management to be implemented
-     */
-    private class IndexEntries {
-        public Map<Integer, Integer> recordOffsetToByteOffsets;
-        private final int flushThreshold = 100; // note: contents will be empty after hitting this threshold
+    // temporarily store info in line w/ buffer to be committed after flush
+    private class Accumulator {
+        public int bytes;
+        public int numRecords;
+        Map<Integer, Integer> tempRecToByteOffsets;
 
-        public IndexEntries() {
-            recordOffsetToByteOffsets = new HashMap<>();
+        public Accumulator() {
+            bytes = 0;
+            numRecords = 0;
+            tempRecToByteOffsets = new HashMap<>();
         }
 
-        // creates new entry and also handles automatic flushing
-        public void createNewEntry(int recordOffset, int byteOffset) {
-            recordOffsetToByteOffsets.put(recordOffset, byteOffset);
-            if (recordOffsetToByteOffsets.size() >= flushThreshold) {
-                try {
-                    flushIndexEntries();
-                    recordOffsetToByteOffsets.clear();
-                }
-                catch (IOException e) {
-                    Logger.error("Error when flushing index entries.");
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        public void flushIndexEntries() throws IOException {
-            // 8 bytes per entry (4 for record offset, 4 for byte offset)
-            int numOfOffsetPairs = recordOffsetToByteOffsets.size();
-            ByteBuffer buffer = ByteBuffer.allocate(numOfOffsetPairs * 8);
-
-            recordOffsetToByteOffsets.forEach((recOffset, byteOffset) -> {
-                buffer.putInt(recOffset);
-                buffer.putInt(byteOffset);
-            });
-
-            Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
+        void reset() {
+            bytes = 0;
+            numRecords = 0;
+            tempRecToByteOffsets.clear();
         }
     }
 
     public LogSegment(int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
-        entries = new IndexEntries();
 
         try {
             createDataFolder();
@@ -92,6 +72,7 @@ public class LogSegment {
 
             this.logFile = createFile(logFileName);
             this.indexFile = createFile(indexFileName);
+            entries = new IndexEntries(indexFile);
 
         } catch (IOException e) {
             Logger.error("IOException occurred while creating LogSegment files.");
@@ -100,6 +81,7 @@ public class LogSegment {
 
         this.isActive = true; // by default, this LogSegment is active upon creation, but tread carefully
         this.currentSizeInBytes = 0;
+        this.accumulator = new Accumulator();
     }
 
     // overloaded constructor in case we want to manually define threshold
@@ -147,13 +129,65 @@ public class LogSegment {
         return file;
     }
 
-    public boolean shouldBeImmutable() {
-        return this.currentSizeInBytes >= segmentThresholdInBytes;
+    public void appendToBuffer(byte[] data, int currRecordOffset) {
+        if (data == null || data.length == 0) {
+            Logger.warn("Data null or empty");
+            return;
+        }
+
+        // not enough space for data or exceeds threshold
+        if (buffer.remaining() < data.length || buffer.position() > flushThreshold) {
+            flushAsync();
+        }
+
+        if (data.length > flushThreshold) {
+            // obnoxiously large record
+            Logger.warn("Message length too large. Cannot append");
+            return;
+        }
+        buffer.put(data);
+
+        // put in temp rec to byte offsets
+        accumulator.tempRecToByteOffsets.put(currRecordOffset, currentSizeInBytes);
+        currentSizeInBytes += data.length;
+        accumulator.bytes += data.length;
+        accumulator.numRecords++;
     }
 
-    // once its immutable, the LogSegment can not be written to anymore (important)
-    public void setAsImmutable() {
-        this.isActive = false;
+    private void flushAsync() {
+        if (buffer.position() == 0) {
+            return;
+        }
+        Logger.info("**************--------------------Commencing flushing process | Threshold = %d, Buffer = %d", flushThreshold, buffer.flip().remaining());
+        buffer.flip(); // important to set position pointer to 0
+        byte[] data = new byte[buffer.remaining()];
+        buffer.get(data);
+
+        // should i submit copy of the data to be flushed or original? come back later
+        Future<?> future = FluxExecutor.getExecutorService().submit(() -> {
+            try {
+                // note: BufferedOutputStream is a viable alternative here as well for Files.write()
+                Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
+
+                // after data written to disk, then commit entries and offsets and all dat
+                this.currentSizeInBytes += accumulator.bytes;
+                this.endOffset += accumulator.numRecords;
+                accumulator.tempRecToByteOffsets.forEach((key, value) -> {
+                    if (!entries.recordOffsetToByteOffsets.containsKey(key)) {
+                        entries.createNewEntry(key, value);
+                    }
+                });
+                accumulator.reset();
+                helperMethodToPrint();
+                Logger.info("\u001B[32m" + "Flush completed." + "\u001B[0m");
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        buffer = ByteBuffer.allocateDirect(flushThreshold);
+
+        // can optionally use future.get() and print lines for debugging to verify the file contents are written
+        // (but it blocks main thread---only use for debugging)
     }
 
     public void writeRecordToSegment(byte[] record, int currRecordOffset) throws IOException {
@@ -171,20 +205,20 @@ public class LogSegment {
             return;
         }
 
-        // store entry before modifying bytes first
-        this.entries.createNewEntry(currRecordOffset, currentSizeInBytes);
-        appendDataToLogFile(record);
+        prependByteOffset(record);
+        appendToBuffer(record, currRecordOffset);
     }
 
     public Message getRecordFromSegmentAtOffset(int recordOffset) throws IOException {
+        // what do we do if our record is still in the buffer and not yet flushed to the file?
+        // kafka does not allow consumers to fetch messages that have not yet been written to disk, for consistency reasons
         System.out.println("Offsets contents: " + entries.recordOffsetToByteOffsets.entrySet());
         if (!entries.recordOffsetToByteOffsets.containsKey(recordOffset)) {
-            System.out.println("Key = " + recordOffset);
-            System.err.println("Record not found: " + recordOffset);
+            Logger.warn("Record not found with key = " + recordOffset);
             return null;
         }
         if (recordOffset > this.endOffset) {
-            System.out.println("No more records to read");
+            System.out.println("No more records to read.");
             return null;
         }
 
@@ -197,7 +231,10 @@ public class LogSegment {
 
             byte[] header = new byte[12];
             int bytesRead = raf.read(header);
-            System.out.println("HEADER: " + Arrays.toString(header));
+            if (bytesRead == -1) { // nothing to read, avoid error
+                return null;
+            }
+            System.out.println("HEADER: " + Arrays.toString(header) + "\n | BYTES READ: " + bytesRead);
 
             ByteBuffer buffer = ByteBuffer.wrap(header);
             int recordSize = buffer.getInt(8);
@@ -208,7 +245,7 @@ public class LogSegment {
             byte[] data = new byte[recordSize + 12];
             raf.read(data);
 
-            System.out.println("PRINTING DATA: " + Arrays.toString(data));
+            helperMethodToPrint();
 
             // deserialize into producer rec first so we can get the fields
             ProducerRecord<String, String> rec = ProducerRecordCodec.deserialize(
@@ -228,6 +265,15 @@ public class LogSegment {
 
             System.out.println("\nPRINTING DESERIALIZED PRODREC---------- \n" + rec + "\n");
             return msg;
+        }
+    }
+
+    private void helperMethodToPrint() {
+        try {
+            byte[] bytes = Files.readAllBytes(Path.of(logFile.getPath()));
+            System.out.println("ALL DATA: " + Arrays.toString(bytes) + " | LEN = " + bytes.length);
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -251,34 +297,24 @@ public class LogSegment {
         byte[] occupiedData = new byte[batch.getCurrBatchSizeInBytes()];
         buffer.get(occupiedData); // transfers bytes from buffer --> occupiedData
 
-        appendDataToLogFile(occupiedData);
+//        appendDataToLogBuffer(occupiedData);
     }
 
-    private void appendDataToLogFile(byte[] data) throws IOException {
-        try {
-            prependByteOffset(data);
 
-            // write occupied data to the log file
-            Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
-
-            System.out.println("-----------------------------------------------PRINTING ALL BYTE DATA IN FILE-----------------------------------------------");
-            byte[] testData = Files.readAllBytes(Path.of(logFile.getPath()));
-            System.out.println(Arrays.toString(testData));
-            System.out.println("-----------------------------------------------END OF PRINTING ALL BYTE DATA IN FILE-----------------------------------------------");
-
-            this.currentSizeInBytes += data.length;
-            this.endOffset++;
-            Logger.info("3. Data successfully written to segment.");
-        } catch (IOException e) {
-            Logger.error("Failed to write data to log segment.", e);
-            throw e;
-        }
-    }
-
+    // NOTE: THIS MODIFIES THE DATA IN-PLACE
     private void prependByteOffset(byte[] data) {
         // first 4 bytes are for the record offset, next 4 for byte offset
         ByteBuffer buffer = ByteBuffer.wrap(data);
         buffer.putInt(4, currentSizeInBytes);
+    }
+
+    public boolean shouldBeImmutable() {
+        return this.currentSizeInBytes >= segmentThresholdInBytes;
+    }
+
+    // once its immutable, the LogSegment can not be written to anymore (important)
+    public void setAsImmutable() {
+        this.isActive = false;
     }
 
     public boolean isActive() {
