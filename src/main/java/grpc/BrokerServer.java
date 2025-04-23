@@ -119,7 +119,7 @@ public class BrokerServer {
                             .setNextOffset(nextOffset);
                     nextOffset++;
                 } else {
-                    // no more messages to read
+                    // no more messages to read OR data not yet flushed to disk
                     responseBuilder
                             .setMessage(Message.newBuilder().getDefaultInstanceForType())
                             .setStatus(FetchMessageResponse.Status.READ_COMPLETION)

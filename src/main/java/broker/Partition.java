@@ -46,6 +46,7 @@ public class Partition {
         if (activeSegment == null) {
             activeSegment = createNewSegment();
         }
+        Logger.info("APPEND SINGLE RECORD: " + Arrays.toString(record));
         activeSegment.writeRecordToSegment(record, currRecordOffset);
         Logger.info("2. Successfully appended record to active segment");
     }

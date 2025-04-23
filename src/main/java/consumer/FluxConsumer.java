@@ -75,6 +75,7 @@ public class FluxConsumer<K, V> implements Consumer {
             FetchMessageResponse response = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
 
             if (response.getStatus().equals(FetchMessageResponse.Status.READ_COMPLETION)) {
+                Logger.info("READ COMPLETION");
                 return new PollResult(records, false);
             }
 
