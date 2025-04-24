@@ -1,12 +1,12 @@
 package broker;
 
-import consumer.ConsumerRecord;
 import org.tinylog.Logger;
 import producer.RecordBatch;
 import proto.Message;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 public class Broker {
     private String brokerId;
@@ -41,6 +41,8 @@ public class Broker {
         // throw record offset into the header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
         buffer.putInt(0, nextAvailOffset);
+
+        Logger.info("PRODUCE SINGLE MSSAGE: " + Arrays.toString(buffer.array()));
 
         int currRecordOffset = nextAvailOffset;
         nextAvailOffset++;
