@@ -7,6 +7,7 @@ import proto.Message;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.List;
 
 public class Broker {
     private String brokerId;
@@ -31,12 +32,6 @@ public class Broker {
         this.partition = new Partition(1);
     }
 
-    // TODO: Replace mock implementation when gRPC is implemented
-    public void produceMessages(RecordBatch batch) throws IOException {
-        partition.appendRecordBatch(batch);
-        Logger.info("Appended record batch to broker.");
-    }
-
     public int produceSingleMessage(byte[] record) throws IOException {
         // throw record offset into the header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
@@ -51,6 +46,24 @@ public class Broker {
         Logger.info("1. Appended record to broker.");
 
         return currRecordOffset;
+    }
+
+    // TODO: Replace mock implementation when gRPC is implemented
+    public void produceMessages(RecordBatch batch) throws IOException {
+        partition.appendRecordBatch(batch);
+        Logger.info("Appended record batch to broker.");
+    }
+
+    public int produceMessages(List<byte[]> messages) throws IOException {
+        // we can just call the produceSingleMessage() for each byte[] in messages
+        int counter = 0;
+        int lastRecordOffset = nextAvailOffset;
+        for (byte[] message : messages) {
+            lastRecordOffset = produceSingleMessage(message);
+            counter++;
+        }
+        Logger.info("Appended " + counter + " records to broker.");
+        return lastRecordOffset;
     }
 
     // TODO: Finish consumer infrastructure
