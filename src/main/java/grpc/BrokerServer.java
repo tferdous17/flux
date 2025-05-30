@@ -6,9 +6,11 @@ import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
+import org.tinylog.Logger;
 import proto.*;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -75,10 +77,16 @@ public class BrokerServer {
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
-            byte[] data = req.getData().toByteArray();
+            List<byte[]> data = req
+                                .getDataList()
+                                .stream()
+                                .map(ByteString::toByteArray)
+                                .toList();
 
+            System.out.println("DATA LIST: " + data);
             try {
-                int recordOffset = broker.produceSingleMessage(data);
+                Logger.info("Producing messages");
+                int recordOffset = broker.produceMessages(data);
                 ackBuilder
                     .setAcknowledgement("ACK: Data received successfully.")
                     .setStatus(Status.SUCCESS)
