@@ -36,8 +36,9 @@ public class LogSegment {
     private int startOffset; // for entire segment
     private int endOffset; // for entire segment
     private IndexEntries entries;
-    private int flushThreshold = 100;
-    private ByteBuffer buffer = ByteBuffer.allocateDirect(flushThreshold);
+    
+    private final int FLUSH_THRESHOLD_IN_BYTES = 524_288; // 1:5 ratio wrt segment threshold, ratio chosen for high throughput
+    private ByteBuffer buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
     private Accumulator accumulator;
 
     // temporarily store info in line w/ buffer to be committed after flush
@@ -136,11 +137,11 @@ public class LogSegment {
         }
 
         // not enough space for data or exceeds threshold
-        if (buffer.remaining() < data.length || buffer.position() > flushThreshold) {
+        if (buffer.remaining() < data.length || buffer.position() > FLUSH_THRESHOLD_IN_BYTES) {
             flushAsync();
         }
 
-        if (data.length > flushThreshold) {
+        if (data.length > FLUSH_THRESHOLD_IN_BYTES) {
             // obnoxiously large record
             Logger.warn("Message length too large. Cannot append");
             return;
@@ -158,7 +159,7 @@ public class LogSegment {
         if (buffer.position() == 0) {
             return;
         }
-        Logger.info("**************--------------------Commencing flushing process | Threshold = %d, Buffer = %d", flushThreshold, buffer.flip().remaining());
+        Logger.info("**************--------------------Commencing flushing process | Threshold = %d, Buffer = %d", FLUSH_THRESHOLD_IN_BYTES, buffer.flip().remaining());
         buffer.flip(); // important to set position pointer to 0
         byte[] data = new byte[buffer.remaining()];
         buffer.get(data);
@@ -184,7 +185,7 @@ public class LogSegment {
                 throw new RuntimeException(e);
             }
         });
-        buffer = ByteBuffer.allocateDirect(flushThreshold);
+        buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
 
         // can optionally use future.get() and print lines for debugging to verify the file contents are written
         // (but it blocks main thread---only use for debugging)
