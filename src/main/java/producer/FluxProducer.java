@@ -12,18 +12,22 @@ import proto.PublishToBrokerGrpc;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class FluxProducer<K, V> implements Producer {
     private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
     private ManagedChannel channel;
     RecordAccumulator recordAccumulator = new RecordAccumulator();
     List<byte[]> buffer;
-    private final int BUFFER_RECORD_THRESHOLD = 10_000; // adjust as needed
+    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
 
     public FluxProducer() {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = PublishToBrokerGrpc.newBlockingStub(channel);
         buffer = new ArrayList<>();
+        scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, 30, 60, TimeUnit.SECONDS);
     }
 
     @Override
@@ -38,20 +42,29 @@ public class FluxProducer<K, V> implements Producer {
         byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
         buffer.add(serializedData);
         Logger.info("Record added to buffer.");
-
-        if (buffer.size() >= BUFFER_RECORD_THRESHOLD) { // rn just flushing based off # of records
-            flushBuffer();
-        }
     }
 
     private void flushBuffer() {
         Logger.info("COMMENCING BUFFER FLUSH.");
-        List<ByteString> byteStringList = buffer.stream().map(ByteString::copyFrom).toList();
+
+        if (buffer.isEmpty()) {
+            return;
+        }
+
+        List<byte[]> bufferSnapshot = new ArrayList<>();
+        for (byte[] b : buffer) {
+            bufferSnapshot.add(b);
+        }
+        buffer.clear();
+
+        List<ByteString> byteStringList = bufferSnapshot.stream().map(ByteString::copyFrom).toList();
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                 .newBuilder()
                 .addAllData(byteStringList)
                 .build();
+
+        System.out.println("SIZE OF REQ: " + request.getSerializedSize());
 
         // Send the request and receive the response (acknowledgement)
         BrokerToPublisherAck response;
