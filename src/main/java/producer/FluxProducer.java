@@ -1,6 +1,7 @@
 package producer;
 
 import com.google.protobuf.ByteString;
+import commons.headers.Headers;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -19,15 +20,22 @@ import java.util.concurrent.TimeUnit;
 public class FluxProducer<K, V> implements Producer {
     private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
     private ManagedChannel channel;
-    RecordAccumulator recordAccumulator = new RecordAccumulator();
     List<byte[]> buffer;
     private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
 
-    public FluxProducer() {
+    public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = PublishToBrokerGrpc.newBlockingStub(channel);
         buffer = new ArrayList<>();
-        scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, 30, 60, TimeUnit.SECONDS);
+        scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
+    }
+
+    public FluxProducer(long flushDelayInterval) {
+        this(60, flushDelayInterval);
+    }
+
+    public FluxProducer() {
+        this(60, 60);
     }
 
     @Override
