@@ -13,18 +13,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Partition {
     private Log log;
     private int partitionId;
-    private AtomicInteger currentOffset;
+    private AtomicInteger currentOffset = new AtomicInteger(0);
 
     private List<LogSegment> segments;
     private LogSegment activeSegment;
 
     public Partition(int partitionId) throws IOException {
-        this.log = new Log();
+        // figure out why other log constructor is not creating partition file
         this.partitionId = partitionId;
-        this.currentOffset = new AtomicInteger(log.getLogEndOffset());
-        // Initialize the segments list and set the first active segment
         this.segments = new ArrayList<>();
-        this.activeSegment = createNewSegment();
+        LogSegment segment = createNewSegment();
+        this.activeSegment = segment;
+        this.log = new Log(segment);
+        this.currentOffset = new AtomicInteger(log.getLogEndOffset());
     }
 
     private boolean canAppendRecordToSegment(byte[] record) {
@@ -38,6 +39,7 @@ public class Partition {
         LogSegment newSegment = new LogSegment(partitionId, currentOffset.get());
         segments.add(newSegment);
         activeSegment = newSegment;
+        System.out.println("CURRENT OFFSET IS: " + currentOffset.get());
         Logger.info("Created new log segment starting at offset {}", currentOffset.get());
         return newSegment;
     }
@@ -46,8 +48,14 @@ public class Partition {
         if (activeSegment == null) {
             activeSegment = createNewSegment();
         }
+
         Logger.info("APPEND SINGLE RECORD: " + Arrays.toString(record));
-        activeSegment.writeRecordToSegment(record, currRecordOffset);
+        // if writeRecordToSegment returns false, it means the active segment is no longer mutable
+        if (!activeSegment.writeRecordToSegment(record, currRecordOffset)) {
+            // thus we have to create a new active segment to append incoming records to
+            createNewSegment().writeRecordToSegment(record, currRecordOffset);
+        };
+        currentOffset.getAndAdd(1);
         Logger.info("2. Successfully appended record to active segment");
     }
 

@@ -21,8 +21,8 @@ public class Log {
         this.segments = new ArrayList<>();
         try {
             this.segments.add(new LogSegment(0, 0));
-            this.logStartOffset = segments.get(0).getStartOffset();
-            this.logEndOffset = segments.get(0).getEndOffset();
+            this.logStartOffset = segments.getFirst().getStartOffset();
+            this.logEndOffset = segments.getFirst().getEndOffset();
         } catch (IOException e) {
             throw e;
         }
