@@ -153,6 +153,8 @@ public class LogSegment {
         currentSizeInBytes += data.length;
         accumulator.bytes += data.length;
         accumulator.numRecords++;
+
+        System.out.println("CURRENT SiZE IN BYTES: " + currentSizeInBytes);
     }
 
     private void flushAsync() {
@@ -186,6 +188,14 @@ public class LogSegment {
             }
         });
         buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
+
+        FluxExecutor.getExecutorService().submit(() -> {
+            try {
+                entries.flushIndexEntries(); // write index entries to disk right after log file is written to
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
 
         // can optionally use future.get() and print lines for debugging to verify the file contents are written
         // (but it blocks main thread---only use for debugging)
