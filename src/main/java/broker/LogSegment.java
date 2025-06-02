@@ -191,23 +191,25 @@ public class LogSegment {
         // (but it blocks main thread---only use for debugging)
     }
 
-    public void writeRecordToSegment(byte[] record, int currRecordOffset) throws IOException {
+    // Return value dictates whether or not the segment is actually mutable or not
+    public boolean writeRecordToSegment(byte[] record, int currRecordOffset) throws IOException {
         if (shouldBeImmutable()) {
             Logger.info("Log segment is now at capacity, setting as immutable.");
             setAsImmutable();
-            return;
+            return false;
         }
         if (!isActive) {
             Logger.warn("Batch is immutable, can not append.");
-            return;
+            return false;
         }
         if (this.currentSizeInBytes + record.length > segmentThresholdInBytes) {
             Logger.warn("Size of record exceeds log segment threshold.");
-            return;
+            return false;
         }
 
         prependByteOffset(record);
         appendToBuffer(record, currRecordOffset);
+        return true;
     }
 
     public Message getRecordFromSegmentAtOffset(int recordOffset) throws IOException {
