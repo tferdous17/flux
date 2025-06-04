@@ -44,6 +44,7 @@ public class LogSegment {
     private Accumulator accumulator;
 
     // temporarily store info in line w/ buffer to be committed after flush
+    // note: this is for index entries specifically, so it only gets populated when data is written to disk
     private class Accumulator {
         public int bytes;
         public int numRecords;

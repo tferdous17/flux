@@ -52,6 +52,11 @@ public class FluxProducer<K, V> implements Producer {
         Logger.info("Record added to buffer.");
     }
 
+    // NOTE: ONLY USE THIS FOR TESTING
+    public void forceFlush() {
+        flushBuffer();
+    }
+
     private void flushBuffer() {
         Logger.info("COMMENCING BUFFER FLUSH.");
 
