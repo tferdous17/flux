@@ -39,6 +39,8 @@ public class LogSegment {
     
     private final int FLUSH_THRESHOLD_IN_BYTES = 524_288; // 1:5 ratio wrt segment threshold, ratio chosen for high throughput
     private ByteBuffer buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
+    // record offset -> (byte offset, record length)
+    private Map<Integer, int[]> recOffsetToByteOffsetAndRecLen = new HashMap<>();
     private Accumulator accumulator;
 
     // temporarily store info in line w/ buffer to be committed after flush
@@ -146,7 +148,10 @@ public class LogSegment {
             Logger.warn("Message length too large. Cannot append");
             return;
         }
+        System.out.println("BUFFER POSITION: " + buffer.position());
+        recOffsetToByteOffsetAndRecLen.put(currRecordOffset, new int[]{buffer.position(), data.length});
         buffer.put(data);
+        System.out.println("DATA AFTER BUFFER PUT IN: " + Arrays.toString(data) + " its length = " + data.length);
 
         // put in temp rec to byte offsets
         accumulator.tempRecToByteOffsets.put(currRecordOffset, currentSizeInBytes);
@@ -187,7 +192,9 @@ public class LogSegment {
                 throw new RuntimeException(e);
             }
         });
+        // clear buffer for further operations
         buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
+        recOffsetToByteOffsetAndRecLen.clear();
 
         FluxExecutor.getExecutorService().submit(() -> {
             try {
@@ -222,9 +229,47 @@ public class LogSegment {
         return true;
     }
 
+    public Message getRecordFromBuffer(int recordOffset) {
+        Logger.info("Getting record with offset = " + recordOffset + " from buffer");
+        int[] byteOffsetAndRecordLen = recOffsetToByteOffsetAndRecLen.get(recordOffset);
+        Logger.info("Byte Offset and Record Len: " + Arrays.toString(byteOffsetAndRecordLen));
+        byte[] data = new byte[byteOffsetAndRecordLen[1]];
+
+        buffer.position(byteOffsetAndRecordLen[0]);
+        // issue is here
+        buffer.get(data, 0, byteOffsetAndRecordLen[1]);
+        System.out.println("DATA: " + Arrays.toString(data));
+
+        // deserialize into producer rec first so we can get the fields
+        ProducerRecord<String, String> rec = ProducerRecordCodec.deserialize(
+                data,
+                String.class,
+                String.class
+        );
+
+        Message msg = Message
+                .newBuilder()
+                .setTopic(rec.getTopic())
+                .setPartition(rec.getPartitionNumber() == null ? 1 : rec.getPartitionNumber())
+                .setOffset(recordOffset)
+                .setTimestamp(rec.getTimestamp())
+                .setKey(rec.getKey() == null ? "" : rec.getKey())
+                .setValue(rec.getValue()).buildPartial();
+
+        System.out.println(msg);
+
+        // reset buffer position to the end so that new records can get appended later w/o overwriting anything
+        buffer.position(buffer.remaining());
+        return msg;
+    }
+
     public Message getRecordFromSegmentAtOffset(int recordOffset) throws IOException {
-        // what do we do if our record is still in the buffer and not yet flushed to the file?
-        // kafka does not allow consumers to fetch messages that have not yet been written to disk, for consistency reasons
+        // For records that are still in the internal buffer and not yet written to disk, they can still be fetched in the meantime
+        if (recOffsetToByteOffsetAndRecLen.containsKey(recordOffset)) {
+            Logger.info("Record to consume is still in buffer. Fetching from internal buffer.");
+            return getRecordFromBuffer(recordOffset);
+        }
+
         System.out.println("Offsets contents: " + entries.recordOffsetToByteOffsets.entrySet());
         if (!entries.recordOffsetToByteOffsets.containsKey(recordOffset)) {
             Logger.warn("Record not found with key = " + recordOffset);
