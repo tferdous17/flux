@@ -27,7 +27,8 @@ public class ConsumerServiceTest {
         }
 
         // Start client
-        startClient();
+        clientPollTest();
+
     }
 
     private static void startServer() {
@@ -43,34 +44,49 @@ public class ConsumerServiceTest {
         }
     }
 
-    private static void startClient() {
+    private static String randStringGen() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0; i < 50; i++) {
+            sb.append(chars.charAt((int) (Math.random() * chars.length())));
+        }
+        return sb.toString();
+    }
+
+
+    private static void warmup() {
         FluxProducer<String, String> producer = new FluxProducer<>();
+
+        for (int i = 0; i < 10; i++) {
+            String t = randStringGen();
+            ProducerRecord<String, String> record = new ProducerRecord<>("topic", t);
+            try {
+                producer.send(record);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        producer.forceFlush();
+
+    }
+
+    private static void clientPollTest() {
+        warmup();
         FluxConsumer<String, String> consumer = new FluxConsumer<>();
 
-        ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-value");
-        ProducerRecord<String, String> record2 = new ProducerRecord<>("lsjkdfsadfkljopic234", "fvaluasdfae");
-        ProducerRecord<String, String> record3 = new ProducerRecord<>("tasdlfhjwoeihjfsd", "34tgrvaadfasdflue");
-
-        try {
-            producer.sendDirect(record);
-            producer.sendDirect(record2);
-            producer.sendDirect(record3);
-
-            // refer to KafkaConsumer for why the test is structured like this
-            // note: kafka does not have a defined way to stop polling, but flux does for convenience purposes
-            while (true) {
-                PollResult result = consumer.poll(Duration.ofMillis(100));
-                if (!result.shouldContinuePolling()) {
-                    break;
-                }
-                for (ConsumerRecord<String, String> rec : result.records()) {
-                    System.out.println(rec);
-                }
+        // refer to KafkaConsumer for why the test is structured like this
+        // note: kafka does not have a defined way to stop polling, but flux does for convenience purposes
+        while (true) {
+            PollResult result = consumer.poll(Duration.ofMillis(100));
+            if (!result.shouldContinuePolling()) {
+                System.out.println("polling will no longer continue");
+                break;
             }
-
-
-        } catch (IOException e) {
-            System.out.println(e.getMessage());
+            for (ConsumerRecord<String, String> rec : result.records()) {
+                System.out.println(rec);
+            }
         }
     }
 }
