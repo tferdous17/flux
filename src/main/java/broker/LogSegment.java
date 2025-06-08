@@ -188,7 +188,7 @@ public class LogSegment {
                 });
                 accumulator.reset();
                 helperMethodToPrint();
-                Logger.info("\u001B[32m" + "Flush completed." + "\u001B[0m");
+                Logger.info("\u001B[32m" + "Flush completed and data written to disk." + "\u001B[0m");
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
