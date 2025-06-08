@@ -17,19 +17,16 @@ public class Broker {
     private Partition partition;
     private int nextAvailOffset; // record offsets
 
-    public Broker() throws IOException {
-        this.brokerId = "BROKER-1";
-        this.host = "localhost";
-        this.port = 50051;
-        this.partition = new Partition(1);
-        this.nextAvailOffset = 0;
-    }
-
     public Broker(String brokerId, String host, int port) throws IOException {
         this.brokerId = brokerId;
         this.host = host;
         this.port = port;
         this.partition = new Partition(1);
+        this.nextAvailOffset = 0;
+    }
+
+    public Broker() throws IOException {
+        this("BROKER-1", "localhost", 50051);
     }
 
     public int produceSingleMessage(byte[] record) throws IOException {
