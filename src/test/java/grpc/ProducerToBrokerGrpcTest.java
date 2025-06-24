@@ -39,18 +39,30 @@ public class ProducerToBrokerGrpcTest {
         }
     }
 
-    private static void startClient() {
-        FluxProducer<String, String> producer = new FluxProducer<>();
-        ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-value");
-        ProducerRecord<String, String> record2 = new ProducerRecord<>("test-topic2", "test-value2");
-        ProducerRecord<String, String> record3 = new ProducerRecord<>("test-topic3", "test-value3");
+    private static String randStringGen() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+        StringBuilder sb = new StringBuilder();
 
-        try {
-            producer.sendDirect(record);
-            producer.sendDirect(record2);
-            producer.sendDirect(record3);
-        } catch (IOException e) {
-            System.out.println(e.getMessage());
+        for (int i = 0; i < 50; i++) {
+            sb.append(chars.charAt((int) (Math.random() * chars.length())));
+        }
+        return sb.toString();
+    }
+
+    // Make sure to manually close when done with testing this
+    private static void startClient() {
+        FluxProducer<String, String> producer = new FluxProducer<>(30, 60);
+        while (true) {
+            String t = randStringGen();
+            ProducerRecord<String, String> record = new ProducerRecord<>("topic", t);
+            try {
+                producer.send(record);
+                Thread.sleep(500);
+            } catch (IOException | InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
+
+
 }

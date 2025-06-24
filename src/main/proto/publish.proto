@@ -8,7 +8,7 @@ service PublishToBroker {
 }
 
 message PublishDataToBrokerRequest {
-  bytes data = 1;
+  repeated bytes data = 1;
 }
 
 enum Status {
