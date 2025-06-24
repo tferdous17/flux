@@ -1,7 +1,6 @@
 package producer;
 
 import com.google.protobuf.ByteString;
-import commons.headers.Headers;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -9,6 +8,7 @@ import org.tinylog.Logger;
 import proto.BrokerToPublisherAck;
 import proto.PublishDataToBrokerRequest;
 import proto.PublishToBrokerGrpc;
+import proto.Status;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -84,11 +84,15 @@ public class FluxProducer<K, V> implements Producer {
         try {
             Logger.info("SENDING OVER BATCH OF RECORDS.");
             response = blockingStub.send(request);
-            buffer.clear();
         } catch (Exception e) {
             e.printStackTrace();
             return;
         }
+
+        if (response.getStatus().equals(Status.SUCCESS)) {
+            buffer.clear();
+        }
+
         System.out.println("\n--------------------------------");
         System.out.println(response.getAcknowledgement());
         System.out.println("Status: " + response.getStatus());
