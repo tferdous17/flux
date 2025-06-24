@@ -58,12 +58,13 @@ public class ConsumerServiceTest {
     private static void warmup() {
         FluxProducer<String, String> producer = new FluxProducer<>();
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 100; i++) {
             String t = randStringGen();
             ProducerRecord<String, String> record = new ProducerRecord<>("topic", t);
             try {
                 producer.send(record);
-            } catch (IOException e) {
+                Thread.sleep(1000);
+            } catch (IOException | InterruptedException e) {
                 e.printStackTrace();
             }
         }

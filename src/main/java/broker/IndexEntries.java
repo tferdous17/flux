@@ -17,7 +17,6 @@ import java.util.Map;
  */
 public class IndexEntries {
     public Map<Integer, Integer> recordOffsetToByteOffsets;
-    private final int flushThreshold = 3; // note: contents will be empty after hitting this threshold
     private File indexFile;
     private int offsetPtr;
 
