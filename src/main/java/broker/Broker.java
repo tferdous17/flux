@@ -7,6 +7,7 @@ import proto.Message;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.List;
 
 public class Broker {
     private String brokerId;
@@ -16,25 +17,16 @@ public class Broker {
     private Partition partition;
     private int nextAvailOffset; // record offsets
 
-    public Broker() throws IOException {
-        this.brokerId = "BROKER-1";
-        this.host = "localhost";
-        this.port = 50051;
-        this.partition = new Partition(1);
-        this.nextAvailOffset = 0;
-    }
-
     public Broker(String brokerId, String host, int port) throws IOException {
         this.brokerId = brokerId;
         this.host = host;
         this.port = port;
         this.partition = new Partition(1);
+        this.nextAvailOffset = 0;
     }
 
-    // TODO: Replace mock implementation when gRPC is implemented
-    public void produceMessages(RecordBatch batch) throws IOException {
-        partition.appendRecordBatch(batch);
-        Logger.info("Appended record batch to broker.");
+    public Broker() throws IOException {
+        this("BROKER-1", "localhost", 50051);
     }
 
     public int produceSingleMessage(byte[] record) throws IOException {
@@ -51,6 +43,24 @@ public class Broker {
         Logger.info("1. Appended record to broker.");
 
         return currRecordOffset;
+    }
+
+    // TODO: Replace mock implementation when gRPC is implemented
+    public void produceMessages(RecordBatch batch) throws IOException {
+        partition.appendRecordBatch(batch);
+        Logger.info("Appended record batch to broker.");
+    }
+
+    public int produceMessages(List<byte[]> messages) throws IOException {
+        // we can just call the produceSingleMessage() for each byte[] in messages
+        int counter = 0;
+        int lastRecordOffset = nextAvailOffset;
+        for (byte[] message : messages) {
+            lastRecordOffset = produceSingleMessage(message);
+            counter++;
+        }
+        Logger.info("Appended " + counter + " records to broker.");
+        return lastRecordOffset;
     }
 
     // TODO: Finish consumer infrastructure

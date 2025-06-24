@@ -9,13 +9,13 @@ import java.util.List;
 public class LogTest {
     @Test
     public void defaultConstructorTest() throws IOException {
-        Log log = new Log();
+        Log log = new Log(1);
         System.out.println(log);
     }
 
     @Test
     public void existingLogSegmentConstructorTest() throws IOException {
-        Log log = new Log( new LogSegment(1,0));
+        Log log = new Log( new LogSegment(1,0), 1);
         System.out.println(log);
     }
 

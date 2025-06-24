@@ -6,6 +6,7 @@ import com.esotericsoftware.kryo.io.Output;
 import commons.header.Header;
 import commons.headers.Headers;
 import commons.serializers.*;
+import org.tinylog.Logger;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -46,6 +47,8 @@ public class ProducerRecordCodec {
         completeRecordBuffer.putInt(recordSize); // next 4 bytes are record size
         completeRecordBuffer.put(serializedData); // rest is data
 
+        Logger.info(Arrays.toString(completeRecordBuffer.array()));
+
         return completeRecordBuffer.array();
     }
 
@@ -56,6 +59,7 @@ public class ProducerRecordCodec {
         int byteOffset = buffer.getInt();
         int recordSize = buffer.getInt();
 
+        System.out.println("PRORECCODEC LOG: RECORD SIZE = " + recordSize);
         byte[] recordData = new byte[recordSize];
         buffer.get(headerSizeInBytes, recordData);
 

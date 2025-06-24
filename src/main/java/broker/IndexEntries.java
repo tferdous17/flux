@@ -17,7 +17,6 @@ import java.util.Map;
  */
 public class IndexEntries {
     public Map<Integer, Integer> recordOffsetToByteOffsets;
-    private final int flushThreshold = 3; // note: contents will be empty after hitting this threshold
     private File indexFile;
     private int offsetPtr;
 
@@ -30,16 +29,6 @@ public class IndexEntries {
     // creates new entry and also handles automatic flushing
     public void createNewEntry(int recordOffset, int byteOffset) {
         recordOffsetToByteOffsets.put(recordOffset, byteOffset);
-        if (recordOffsetToByteOffsets.size() >= flushThreshold) {
-            try {
-                flushIndexEntries();
-                recordOffsetToByteOffsets.clear();
-            }
-            catch (IOException e) {
-                Logger.error("Error when flushing index entries.");
-                e.printStackTrace();
-            }
-        }
     }
 
     public void flushIndexEntries() throws IOException {
@@ -51,18 +40,16 @@ public class IndexEntries {
             buffer.putInt(i);
             buffer.putInt(recordOffsetToByteOffsets.get(i));
         }
+        try {
+            // note: BufferedOutputStream is a viable alternative here as well for Files.write()
+            Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
 
-        FluxExecutor.getExecutorService().submit(() -> {
-            try {
-                // note: BufferedOutputStream is a viable alternative here as well for Files.write()
-                Files.write(Path.of(indexFile.getPath()), buffer.array(), StandardOpenOption.APPEND);
-
-                Logger.info("\u001B[32m" + "Index entry flush completed." + "\u001B[0m");
-                offsetPtr = recordOffsetToByteOffsets.size();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
+            Logger.info("\u001B[32m" + "Index entry flush completed." + "\u001B[0m");
+            offsetPtr = recordOffsetToByteOffsets.size();
+            recordOffsetToByteOffsets.clear();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
 
     }
 }
