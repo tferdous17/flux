@@ -1,6 +1,7 @@
 package admin;
 
+import java.util.Collection;
+
 public interface Admin {
-    void createTopic(String name, int numPartitions);
-    void increasePartitions(String topicName, int partitionCount);
+    void createTopics(Collection<NewTopic> topics);
 }
