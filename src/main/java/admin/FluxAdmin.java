@@ -3,7 +3,9 @@ package admin;
 import commons.header.Properties;
 import org.tinylog.Logger;
 
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -13,51 +15,26 @@ import java.util.Map;
  */
 public class FluxAdmin implements Admin {
     private static FluxAdmin instance = null;
-    private Map<String, Object> topics;
-    private Properties properties;
+    private List<String> bootstrapServerAddrs; // addresses of initial brokers (localhost:8080..etc)
 
-    private FluxAdmin(Properties properties) {
-        this.topics = new HashMap<>();
-        this.properties = properties;
+
+    private FluxAdmin(List<String> bootstrapServerAddrs) {
+        this.bootstrapServerAddrs = bootstrapServerAddrs;
     }
 
-    public static Admin create(Properties properties) {
+    public static Admin create(List<String> bootstrapServerAddrs) {
         if (instance == null) {
             Logger.info("Creating new Admin client");
-            instance = new FluxAdmin(properties);
+            instance = new FluxAdmin(bootstrapServerAddrs);
         } else {
             Logger.warn("Admin client already exists");
         }
         return instance;
     }
 
-    // TODO: Implement createTopic properly when we have support for multiple partitions and topics
     @Override
-    public void createTopic(String name, int numPartitions) {
-        // ! This method is just a mock. When we support topics and 2+ partitions, it will get implemented properly
-        if (!this.topics.containsKey(name)) {
-            topics.put(name, new Object());
-        }
+    public void createTopics(Collection<NewTopic> topics) {
 
-        Logger.info(String.format("Topic created with name %s and %d partitions", name, numPartitions));
     }
 
-    // TODO: Properly implement increasePartitions when we have support for multiple partitions
-    @Override
-    public void increasePartitions(String topicName, int partitionCount) {
-        if (!this.topics.containsKey(topicName)) {
-            return;
-        }
-
-        // increase partitions by partitionCount
-        Logger.info(String.format("Topic %s received %d additional partitions", topicName, partitionCount));
-    }
-
-    public Map<String, Object> getTopics() {
-        return topics;
-    }
-
-    public Properties getProperties() {
-        return properties;
-    }
 }
