@@ -30,6 +30,7 @@ public class BrokerServer {
                 .executor(executor)
                 .addService(new PublishToBrokerImpl(this.broker))
                 .addService(new ConsumerServiceImpl(this.broker))
+                .addService(new CreateTopicsServiceImpl(this.broker))
                 .build()
                 .start();
 
@@ -141,5 +142,33 @@ public class BrokerServer {
             responseObserver.onCompleted(); // lets the client know there are no more messages after this
 
         }
+    }
+
+    static class CreateTopicsServiceImpl extends CreateTopicsServiceGrpc.CreateTopicsServiceImplBase {
+        Broker broker;
+
+        public CreateTopicsServiceImpl(Broker broker) {
+            this.broker = broker;
+        }
+
+        @Override
+        public void createTopics(CreateTopicsRequest req, StreamObserver<CreateTopicsResult> responseObserver) {
+            CreateTopicsResult.Builder resultBuilder = CreateTopicsResult.newBuilder();
+
+            try {
+                this.broker.createTopics(req.getTopicsList());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            resultBuilder.setAcknowledgement("topic creation request received");
+            resultBuilder.setStatus(Status.SUCCESS);
+            resultBuilder.setTotalNumPartitionsCreated(req.getTopicsCount());
+            resultBuilder.addTopicNames("all topic names");
+
+            responseObserver.onNext(resultBuilder.build()); // this just sends the response back to the client
+            responseObserver.onCompleted(); // lets the client know there are no more messages after this
+        }
+
     }
 }
