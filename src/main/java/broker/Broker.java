@@ -3,11 +3,11 @@ package broker;
 import org.tinylog.Logger;
 import producer.RecordBatch;
 import proto.Message;
+import proto.Topic;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 public class Broker {
     private String brokerId;
@@ -17,16 +17,34 @@ public class Broker {
     private Partition partition;
     private int nextAvailOffset; // record offsets
 
+    Map<String, List<Partition>> topicMetadata;
+
     public Broker(String brokerId, String host, int port) throws IOException {
         this.brokerId = brokerId;
         this.host = host;
         this.port = port;
         this.partition = new Partition(1);
         this.nextAvailOffset = 0;
+        this.topicMetadata = new HashMap<>();
     }
 
     public Broker() throws IOException {
         this("BROKER-1", "localhost", 50051);
+    }
+
+    public void createTopics(Collection<Topic> topics) throws IOException {
+        // right now just worry about creating 1 topic
+        String topicName = topics.stream().toList().get(0).getTopicName();
+        int numPartitions = topics.stream().toList().get(0).getNumPartitions();
+        int replicationFactor = topics.stream().toList().get(0).getReplicationFactor();
+
+        ArrayList<Partition> partitions = new ArrayList<>();
+        for (int i = 0; i < numPartitions; i++) {
+            partitions.add(new Partition(2));
+        }
+
+        topicMetadata.put(topicName, partitions);
+        Logger.info("BROKER: Create topics completed successfully.");
     }
 
     public int produceSingleMessage(byte[] record) throws IOException {

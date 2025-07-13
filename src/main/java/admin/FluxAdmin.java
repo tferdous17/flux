@@ -62,7 +62,7 @@ public class FluxAdmin implements Admin {
         CreateTopicsResult response;
         try {
             response = blockingStub.createTopics(request);
-            System.out.println("CreateTopicsRequest Status: " + response.getStatus());
+            System.out.println(response.toString());
         } catch (Exception e) {
             e.printStackTrace();
             return;
