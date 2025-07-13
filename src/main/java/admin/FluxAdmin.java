@@ -1,10 +1,15 @@
 package admin;
 
-import commons.header.Properties;
+import io.grpc.Grpc;
+import io.grpc.InsecureChannelCredentials;
+import io.grpc.ManagedChannel;
 import org.tinylog.Logger;
+import proto.CreateTopicsRequest;
+import proto.CreateTopicsResult;
+import proto.CreateTopicsServiceGrpc;
+import proto.Topic;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * FluxAdmin is a Singleton class to represent a single Admin client.
@@ -13,51 +18,55 @@ import java.util.Map;
  */
 public class FluxAdmin implements Admin {
     private static FluxAdmin instance = null;
-    private Map<String, Object> topics;
-    private Properties properties;
+    private List<String> bootstrapServerAddrs; // addresses of initial brokers (localhost:50051..etc)
 
-    private FluxAdmin(Properties properties) {
-        this.topics = new HashMap<>();
-        this.properties = properties;
+    private final CreateTopicsServiceGrpc.CreateTopicsServiceBlockingStub blockingStub;
+    private ManagedChannel channel;
+
+    private FluxAdmin(List<String> bootstrapServerAddrs) {
+        this.bootstrapServerAddrs = bootstrapServerAddrs;
+        // we send requests to the controller broker but by default we'll send all reqs to the first broker addr
+        // if it's not the controller, reroute it somehow (later problem)
+        channel = Grpc.newChannelBuilder(bootstrapServerAddrs.get(0), InsecureChannelCredentials.create()).build();
+        blockingStub = CreateTopicsServiceGrpc.newBlockingStub(channel);
     }
 
-    public static Admin create(Properties properties) {
+    public static Admin create(List<String> bootstrapServerAddrs) {
         if (instance == null) {
             Logger.info("Creating new Admin client");
-            instance = new FluxAdmin(properties);
+            instance = new FluxAdmin(bootstrapServerAddrs);
         } else {
             Logger.warn("Admin client already exists");
         }
         return instance;
     }
 
-    // TODO: Implement createTopic properly when we have support for multiple partitions and topics
     @Override
-    public void createTopic(String name, int numPartitions) {
-        // ! This method is just a mock. When we support topics and 2+ partitions, it will get implemented properly
-        if (!this.topics.containsKey(name)) {
-            topics.put(name, new Object());
+    public void createTopics(Collection<NewTopic> topics) {
+        List<Topic> newTopicsList = new ArrayList<>();
+        for (NewTopic topic : topics) {
+            Topic newTopic = Topic
+                                        .newBuilder()
+                                        .setTopicName(topic.name())
+                                        .setNumPartitions(topic.numPartitions())
+                                        .setReplicationFactor(topic.replicationFactor())
+                                        .build();
+            newTopicsList.add(newTopic);
         }
 
-        Logger.info(String.format("Topic created with name %s and %d partitions", name, numPartitions));
-    }
+        CreateTopicsRequest request = CreateTopicsRequest
+                                        .newBuilder()
+                                        .addAllTopics(newTopicsList)
+                                        .build();
 
-    // TODO: Properly implement increasePartitions when we have support for multiple partitions
-    @Override
-    public void increasePartitions(String topicName, int partitionCount) {
-        if (!this.topics.containsKey(topicName)) {
+        CreateTopicsResult response;
+        try {
+            response = blockingStub.createTopics(request);
+            System.out.println("CreateTopicsRequest Status: " + response.getStatus());
+        } catch (Exception e) {
+            e.printStackTrace();
             return;
         }
-
-        // increase partitions by partitionCount
-        Logger.info(String.format("Topic %s received %d additional partitions", topicName, partitionCount));
     }
 
-    public Map<String, Object> getTopics() {
-        return topics;
-    }
-
-    public Properties getProperties() {
-        return properties;
-    }
 }

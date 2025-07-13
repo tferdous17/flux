@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+import "common.proto";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service CreateTopicsService {
+  rpc CreateTopics(CreateTopicsRequest) returns (CreateTopicsResult);
+}
+
+message CreateTopicsRequest {
+  repeated Topic topics = 1;
+}
+
+message Topic {
+  string topicName = 1;
+  uint32 numPartitions = 2;
+  uint32 replicationFactor = 3;
+}
+
+message CreateTopicsResult {
+  string acknowledgement = 1;
+  Status status = 2;
+  repeated string topicNames = 3;
+  uint32 totalNumPartitionsCreated = 4;
+}
