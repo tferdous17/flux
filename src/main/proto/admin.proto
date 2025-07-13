@@ -10,10 +10,10 @@ service CreateTopicsService {
 }
 
 message CreateTopicsRequest {
-  repeated NewTopic topics = 1;
+  repeated Topic topics = 1;
 }
 
-message NewTopic {
+message Topic {
   string topicName = 1;
   uint32 numPartitions = 2;
   uint32 replicationFactor = 3;
