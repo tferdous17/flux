@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+import "common.proto";
+
 option java_package = "proto";
 option java_multiple_files = true;
 
@@ -9,12 +11,6 @@ service PublishToBroker {
 
 message PublishDataToBrokerRequest {
   repeated bytes data = 1;
-}
-
-enum Status {
-  SUCCESS = 0;
-  TRANSIENT_FAILURE = 1; // aka temporary failure
-  PERMANENT_FAILURE = 2;
 }
 
 message BrokerToPublisherAck {

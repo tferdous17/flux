@@ -123,14 +123,14 @@ public class BrokerServer {
                 if (msg != null) {
                     responseBuilder
                             .setMessage(msg)
-                            .setStatus(FetchMessageResponse.Status.SUCCESS)
+                            .setStatus(Status.SUCCESS)
                             .setNextOffset(nextOffset);
                     nextOffset++;
                 } else {
                     // no more messages to read OR data not yet flushed to disk
                     responseBuilder
                             .setMessage(Message.newBuilder().getDefaultInstanceForType())
-                            .setStatus(FetchMessageResponse.Status.READ_COMPLETION)
+                            .setStatus(Status.READ_COMPLETION)
                             .setNextOffset(nextOffset);
                 }
             } catch (IOException e) {
