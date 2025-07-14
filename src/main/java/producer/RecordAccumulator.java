@@ -3,19 +3,23 @@ package producer;
 import org.tinylog.Logger;
 
 import java.io.IOException;
+import java.util.Map;
+import java.util.HashMap;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
 
     private final int batchSize;
-    private RecordBatch currentBatch; // Active batch for the single partition
+    private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
 
     public RecordAccumulator() {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
+        this.partitionBatches = new HashMap<>();
     }
 
     public RecordAccumulator(int batchSize) {
         this.batchSize = validateBatchSize(batchSize);
+        this.partitionBatches = new HashMap<>();
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
@@ -29,6 +33,36 @@ public class RecordAccumulator {
         return true;
     }
 
+    /**
+     * Extract partition information from a serialized ProducerRecord
+     */
+    private int extractPartitionFromRecord(byte[] serializedRecord) {
+        try {
+            // Deserialize to get the ProducerRecord and extract partition info
+            ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
+                    serializedRecord, String.class, String.class);
+            
+            // If the record has a specific partition set, use it
+            // Otherwise, we'll let the broker handle partition selection
+            Integer partitionNumber = record.getPartitionNumber();
+            if (partitionNumber != null) {
+                return partitionNumber;
+            }
+            
+            // For records without explicit partition, use a simple hash of the key
+            // Note: This is a fallback - ideally the broker should handle partition selection
+            String key = record.getKey();
+            if (key != null && !key.isEmpty()) {
+                return Math.abs(key.hashCode()) % 3; // Default to 3 partitions, should match broker default
+            } else {
+                return 0; // Default partition for keyless records
+            }
+        } catch (Exception e) {
+            Logger.warn("Failed to extract partition from record, using default partition 0: " + e.getMessage());
+            return 0; // Fallback to partition 0
+        }
+    }
+
     /*
     1. Check for both cases:
         1A) First-time batch exists -> currentBatch == null
@@ -38,31 +72,52 @@ public class RecordAccumulator {
     4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
     */
     public void append(byte[] serializedRecord) throws IOException {
-        // Single partition assumption
-        int partition = 0;
-        int baseOffset = 0;
+        // Extract partition from the serialized record
+        int partition = extractPartitionFromRecord(serializedRecord);
+        RecordBatch currentBatch = partitionBatches.get(partition);
+        
+        int baseOffset = 0; // TODO: Should be determined by broker/partition
+        
         try {
             if (currentBatch == null || !currentBatch.append(serializedRecord)) {
-                if (currentBatch != null) { // Case 1B
-                    Logger.info("Batch is full. Flushing current batch.");
+                if (currentBatch != null) { // Case 1B - batch is full
+                    Logger.info("Batch for partition " + partition + " is full. Flushing current batch.");
                     flush(); // TODO: Missing implementation
                 }
                 Logger.info("Creating a new batch for partition " + partition + ".");
-                currentBatch = createBatch(partition, baseOffset); // Step 3
+                currentBatch = createBatch(partition, baseOffset);
+                partitionBatches.put(partition, currentBatch);
+                
                 if (!currentBatch.append(serializedRecord)) {
                     throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
                 }
             }
-            Logger.info("Record appended successfully.");
+            Logger.info("Record appended successfully to partition " + partition + ".");
         } catch (Exception e) {
             Logger.error("Failed to append record: " + e.getMessage(), e);
             throw e;
         }
     }
 
+    /**
+     * Get the current batch for a specific partition
+     */
+    public RecordBatch getCurrentBatch(int partition) {
+        return partitionBatches.get(partition);
+    }
 
+    /**
+     * Get the current batch for partition 0 (backward compatibility)
+     */
     public RecordBatch getCurrentBatch() {
-        return currentBatch;
+        return getCurrentBatch(0);
+    }
+
+    /**
+     * Get all partition batches
+     */
+    public Map<Integer, RecordBatch> getPartitionBatches() {
+        return new HashMap<>(partitionBatches); // Return copy to prevent external modification
     }
 
     public int getBatchSize() {
@@ -70,10 +125,13 @@ public class RecordAccumulator {
     }
 
     public void printRecord() {
-        System.out.println("Batch Size: " + getBatchSize());
-        System.out.println("Current Batch:");
-
-        getCurrentBatch().printBatchDetails();
+        Logger.info("Batch Size: " + getBatchSize());
+        Logger.info("Partition Batches:");
+        
+        partitionBatches.forEach((partition, batch) -> {
+            Logger.info("Partition " + partition + ":");
+            batch.printBatchDetails();
+        });
     }
 
     private int validateBatchSize(int batchSize) {
