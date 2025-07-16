@@ -8,8 +8,8 @@ service ConsumerService {
 }
 
 message FetchMessageRequest {
-  // not gonna worry about partition id rn in single server model
-  int32 starting_offset = 1;
+  int32 partition_id = 1;
+  int32 starting_offset = 2;
 }
 
 message FetchMessageResponse {
