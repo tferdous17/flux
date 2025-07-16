@@ -10,8 +10,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Broker {
@@ -19,7 +18,7 @@ public class Broker {
     private String host;
     private int port; // ex: port 8080
     private int numPartitions;
-    private Map<Integer, Partition> partitions;
+    private List<Partition> partitions;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
     private int nextAvailOffset; // record offsets
 
@@ -28,11 +27,11 @@ public class Broker {
         this.host = host;
         this.port = port;
         this.numPartitions = numPartitions;
-        this.partitions = new HashMap<>();
+        this.partitions = new ArrayList<>();
         
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            partitions.put(i, new Partition(i));
+            partitions.add(new Partition(i));
         }
         this.nextAvailOffset = 0;
     }
@@ -157,8 +156,8 @@ public class Broker {
     /**
      * Get all partitions
      */
-    public Map<Integer, Partition> getPartitions() {
-        return new HashMap<>(partitions); // Return a copy to prevent external modification
+    public List<Partition> getPartitions() {
+        return new ArrayList<>(partitions); // Return a copy to prevent external modification
     }
     
     /**
