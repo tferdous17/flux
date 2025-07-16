@@ -38,7 +38,8 @@ public class BrokerServer {
         Runtime.getRuntime().addShutdownHook(new Thread() {
             @Override
             public void run() {
-                // Use stderr here since the logger may have been reset by its JVM shutdown hook.
+                // Use stderr here since the logger may have been reset by its JVM shutdown
+                // hook.
                 System.err.println("*** shutting down gRPC server since JVM is shutting down");
                 try {
                     BrokerServer.this.stop();
@@ -78,24 +79,25 @@ public class BrokerServer {
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
             List<byte[]> data = req
-                                .getDataList()
-                                .stream()
-                                .map(ByteString::toByteArray)
-                                .toList();
+                    .getDataList()
+                    .stream()
+                    .map(ByteString::toByteArray)
+                    .toList();
 
             System.out.println("DATA LIST: " + data);
             try {
                 Logger.info("Producing messages");
                 int recordOffset = broker.produceMessages(data);
                 ackBuilder
-                    .setAcknowledgement("ACK: Data received successfully.")
-                    .setStatus(Status.SUCCESS)
-                    .setRecordOffset(recordOffset);
+                        .setAcknowledgement("ACK: Data received successfully.")
+                        .setStatus(Status.SUCCESS)
+                        .setRecordOffset(recordOffset);
 
             } catch (IOException e) {
-                // will need logic in the future to differentiate between transient and permanent failures
+                // will need logic in the future to differentiate between transient and
+                // permanent failures
                 // producer will need to explicitly handle these failures and possibly retry
-                 ackBuilder
+                ackBuilder
                         .setAcknowledgement("ERR: " + e.getMessage())
                         .setStatus(Status.TRANSIENT_FAILURE)
                         .setRecordOffset(-1);
@@ -119,7 +121,7 @@ public class BrokerServer {
             FetchMessageResponse.Builder responseBuilder = FetchMessageResponse.newBuilder();
             nextOffset = req.getStartingOffset() + 1;
             try {
-                Message msg = this.broker.consumeMessage(req.getStartingOffset());
+                Message msg = this.broker.consumeMessage(req.getPartitionId(), req.getStartingOffset());
                 if (msg != null) {
                     responseBuilder
                             .setMessage(msg)
