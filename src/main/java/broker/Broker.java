@@ -4,6 +4,7 @@ import org.tinylog.Logger;
 import producer.RecordBatch;
 import producer.ProducerRecord;
 import producer.ProducerRecordCodec;
+import producer.MurmurHash2;
 import proto.Message;
 
 import java.io.IOException;
@@ -45,16 +46,13 @@ public class Broker {
     }
 
     /**
-     * Selects the target partition for a message based on its key.
-     * Uses hash-based partitioning for messages with keys, round-robin for keyless messages.
+     * Validates that the partition number is within valid range.
+     * Partition selection should be done by the producer, not the broker.
      */
-    private int selectPartition(String key) {
-        if (key != null && !key.isEmpty()) {
-            // Hash-based partitioning for messages with keys
-            return Math.abs(key.hashCode()) % numPartitions;
-        } else {
-            // Round-robin for messages without keys
-            return roundRobinCounter.getAndIncrement() % numPartitions;
+    private void validatePartition(int partitionId) {
+        if (partitionId < 0 || partitionId >= numPartitions) {
+            throw new IllegalArgumentException("Invalid partition ID: " + partitionId + 
+                    ". Valid range: 0-" + (numPartitions - 1));
         }
     }
 
@@ -63,8 +61,13 @@ public class Broker {
         ProducerRecord<String, String> prodRecord = ProducerRecordCodec.deserialize(
                 record, String.class, String.class);
         
-        // Select target partition based on key
-        int targetPartitionId = selectPartition(prodRecord.getKey());
+        // Use the partition already selected by the producer
+        int targetPartitionId = prodRecord.getPartitionNumber() != null ? prodRecord.getPartitionNumber() : 0; // fallback
+                                                                                                               // to
+                                                                                                               // partition
+                                                                                                               // 0
+        
+        validatePartition(targetPartitionId);
         Partition targetPartition = partitions.get(targetPartitionId);
         
         // Update record offset in header (first 4 bytes)

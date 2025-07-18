@@ -5,12 +5,15 @@ import org.tinylog.Logger;
 import java.io.IOException;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
 
     private final int batchSize;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
+    private final int numPartitions = 3; // Default number of partitions, should match broker
+    private final AtomicInteger roundRobinCounter = new AtomicInteger(0);
 
     public RecordAccumulator() {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
@@ -46,20 +49,20 @@ public class RecordAccumulator {
             // Otherwise, we'll let the broker handle partition selection
             Integer partitionNumber = record.getPartitionNumber();
             if (partitionNumber != null) {
-                return partitionNumber;
+                return partitionNumber % numPartitions; // Ensure partition is within bounds
             }
             
-            // For records without explicit partition, use a simple hash of the key
-            // Note: This is a fallback - ideally the broker should handle partition selection
+            // For records with a key, use MurmurHash2 for consistent hashing
             String key = record.getKey();
             if (key != null && !key.isEmpty()) {
-                return Math.abs(key.hashCode()) % 3; // Default to 3 partitions, should match broker default
+                return MurmurHash2.selectPartition(key, numPartitions);
             } else {
-                return 0; // Default partition for keyless records
+                // Round-robin for keyless records
+                return roundRobinCounter.getAndIncrement() % numPartitions;
             }
         } catch (Exception e) {
-            Logger.warn("Failed to extract partition from record, using default partition 0: " + e.getMessage());
-            return 0; // Fallback to partition 0
+            Logger.warn("Failed to extract partition from record, using round-robin: " + e.getMessage());
+            return roundRobinCounter.getAndIncrement() % numPartitions;
         }
     }
 
