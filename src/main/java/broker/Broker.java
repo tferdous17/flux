@@ -21,7 +21,6 @@ public class Broker {
     private int numPartitions;
     private List<Partition> partitions;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
-    private int nextAvailOffset; // record offsets
 
     public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
         this.brokerId = brokerId;
@@ -34,7 +33,6 @@ public class Broker {
         for (int i = 0; i < numPartitions; i++) {
             partitions.add(new Partition(i));
         }
-        this.nextAvailOffset = 0;
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
@@ -70,16 +68,15 @@ public class Broker {
         validatePartition(targetPartitionId);
         Partition targetPartition = partitions.get(targetPartitionId);
         
+        int currRecordOffset = targetPartition.getNextOffset();
+        
         // Update record offset in header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
-        buffer.putInt(0, nextAvailOffset);
+        buffer.putInt(0, currRecordOffset);
 
-        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition " + targetPartitionId + 
+        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition " + targetPartitionId +
                    " with key: " + prodRecord.getKey());
         Logger.info("PRODUCE SINGLE MESSAGE: " + Arrays.toString(buffer.array()));
-
-        int currRecordOffset = nextAvailOffset;
-        nextAvailOffset++;
 
         targetPartition.appendSingleRecord(record, currRecordOffset);
         Logger.info("1. Appended record to broker partition " + targetPartitionId);
@@ -101,7 +98,7 @@ public class Broker {
     public int produceMessages(List<byte[]> messages) throws IOException {
         // we can just call the produceSingleMessage() for each byte[] in messages
         int counter = 0;
-        int lastRecordOffset = nextAvailOffset;
+        int lastRecordOffset = -1;
         for (byte[] message : messages) {
             lastRecordOffset = produceSingleMessage(message);
             counter++;

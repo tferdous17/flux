@@ -1,10 +1,18 @@
 package producer;
 
-public class MurmurHash2 {
+import java.nio.charset.StandardCharsets;
+
+public final class MurmurHash2 {
+
+    private MurmurHash2() {
+        // This class should not be instantiated.
+    }
+
     // 32-bit MurmurHash2 implementation for String keys
     public static int hash(String data) {
         if (data == null) return 0;
-        byte[] bytes = data.getBytes();
+        // different encoding can be used, but UTF-8 is standard and widely supported
+        byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
         int length = bytes.length;
         int seed = 0x9747b28c;
         int m = 0x5bd1e995;
@@ -50,7 +58,10 @@ public class MurmurHash2 {
             return 0;
         }
         int hash = MurmurHash2.hash(key);
-        int positiveHash = (hash == Integer.MIN_VALUE ? 0 : Math.abs(hash));
+        // Turn the hash into a positive number.
+        // The & 0x7fffffff operation is a faster way of doing Math.abs()
+        // that also handles Integer.MIN_VALUE correctly.
+        int positiveHash = hash & 0x7fffffff;
         return positiveHash % numPartitions;
     }
 }

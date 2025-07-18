@@ -12,17 +12,19 @@ public class RecordAccumulator {
 
     private final int batchSize;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
-    private final int numPartitions = 3; // Default number of partitions, should match broker
+    private final int numPartitions;
     private final AtomicInteger roundRobinCounter = new AtomicInteger(0);
 
-    public RecordAccumulator() {
+    public RecordAccumulator(int numPartitions) {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
         this.partitionBatches = new HashMap<>();
+        this.numPartitions = numPartitions;
     }
 
-    public RecordAccumulator(int batchSize) {
+    public RecordAccumulator(int batchSize, int numPartitions) {
         this.batchSize = validateBatchSize(batchSize);
         this.partitionBatches = new HashMap<>();
+        this.numPartitions = numPartitions;
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
