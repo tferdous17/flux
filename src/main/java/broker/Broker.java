@@ -4,7 +4,6 @@ import org.tinylog.Logger;
 import producer.RecordBatch;
 import producer.ProducerRecord;
 import producer.ProducerRecordCodec;
-import producer.MurmurHash2;
 import proto.Message;
 
 import java.io.IOException;
@@ -28,7 +27,7 @@ public class Broker {
         this.port = port;
         this.numPartitions = numPartitions;
         this.partitions = new ArrayList<>();
-        
+
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
             partitions.add(new Partition(i));
@@ -49,7 +48,7 @@ public class Broker {
      */
     private void validatePartition(int partitionId) {
         if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId + 
+            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
                     ". Valid range: 0-" + (numPartitions - 1));
         }
     }
@@ -58,24 +57,22 @@ public class Broker {
         // Deserialize the record to extract key for partition selection
         ProducerRecord<String, String> prodRecord = ProducerRecordCodec.deserialize(
                 record, String.class, String.class);
-        
+
         // Use the partition already selected by the producer
-        int targetPartitionId = prodRecord.getPartitionNumber() != null ? prodRecord.getPartitionNumber() : 0; // fallback
-                                                                                                               // to
-                                                                                                               // partition
-                                                                                                               // 0
-        
+        // fallback to partition 0
+        int targetPartitionId = prodRecord.getPartitionNumber() != null ? prodRecord.getPartitionNumber() : 0;
+
         validatePartition(targetPartitionId);
         Partition targetPartition = partitions.get(targetPartitionId);
-        
+
         int currRecordOffset = targetPartition.getNextOffset();
-        
+
         // Update record offset in header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
         buffer.putInt(0, currRecordOffset);
 
         Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition " + targetPartitionId +
-                   " with key: " + prodRecord.getKey());
+                " with key: " + prodRecord.getKey());
         Logger.info("PRODUCE SINGLE MESSAGE: " + Arrays.toString(buffer.array()));
 
         targetPartition.appendSingleRecord(record, currRecordOffset);
@@ -90,7 +87,7 @@ public class Broker {
         // from the batch without decomposing it
         int targetPartitionId = roundRobinCounter.getAndIncrement() % numPartitions;
         Partition targetPartition = partitions.get(targetPartitionId);
-        
+
         targetPartition.appendRecordBatch(batch);
         Logger.info("Appended record batch to broker partition " + targetPartitionId);
     }
@@ -112,16 +109,16 @@ public class Broker {
         // Default to partition 0 for backward compatibility
         return consumeMessage(0, startingOffset);
     }
-    
+
     /**
      * Consume a message from a specific partition at the given offset
      */
     public Message consumeMessage(int partitionId, int startingOffset) throws IOException {
         if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId + 
+            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
                     ". Valid range: 0-" + (numPartitions - 1));
         }
-        
+
         Partition targetPartition = partitions.get(partitionId);
         return targetPartition.getRecordAtOffset(startingOffset);
     }
@@ -147,19 +144,19 @@ public class Broker {
      */
     public Partition getPartition(int partitionId) {
         if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId + 
+            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
                     ". Valid range: 0-" + (numPartitions - 1));
         }
         return partitions.get(partitionId);
     }
-    
+
     /**
      * Get all partitions
      */
     public List<Partition> getPartitions() {
         return new ArrayList<>(partitions); // Return a copy to prevent external modification
     }
-    
+
     /**
      * Get the count of partitions (alias for getNumPartitions for clarity)
      */
