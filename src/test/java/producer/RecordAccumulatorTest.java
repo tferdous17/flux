@@ -23,7 +23,7 @@ public class RecordAccumulatorTest {
         byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
 
         // Execute
-        RecordAccumulator recordAccumulator = new RecordAccumulator();
+        RecordAccumulator recordAccumulator = new RecordAccumulator(3);
         recordAccumulator.append(serializedData);
         recordAccumulator.printRecord();
     }

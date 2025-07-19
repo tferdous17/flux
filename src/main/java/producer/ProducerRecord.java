@@ -72,9 +72,9 @@ public class ProducerRecord<K, V> {
                 .toInstant()
                 .toEpochMilli();
         this.key = Optional.ofNullable(key);
-        if (this.key.isPresent()) {
-            this.partitionNumber = Optional.of(Math.abs(key.hashCode()));
-        }
+        // Let the Broker handle partition selection based on key
+        // Don't pre-calculate partition here since ProducerRecord doesn't know broker's partition count
+        this.partitionNumber = Optional.empty();
     }
 
     public ProducerRecord(String topic, V value) {
