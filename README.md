@@ -76,3 +76,39 @@ The mvn command will **autogenerate** all the protobuf and gRPC files you need f
  has the Window's executable named as the arm64 (mac), because there is no native arm64 support yet for some reason via Maven (very very very very very stupid thing on Maven's part)
   * In this case, you might need to switch to a Windows PC to get everything running or try homebrew's gRPC package(s).
 
+---
+
+## Mac/Apple Silicon Setup Issues & Solution
+
+**Why this workaround?**
+On Mac (especially Apple Silicon/ARM), Maven's gRPC plugin often fetches an incompatible or Windows binary for `protoc-gen-grpc-java`, causing gRPC Java code generation to fail. This is due to a lack of native ARM support in the Maven plugin distribution. The workaround is to use Homebrew to install the correct `protoc`, `grpc`, and `protoc-gen-grpc-java` tools.
+
+1. **Install protoc, grpc, and the gRPC Java plugin via Homebrew:**
+   ```sh
+   brew install protobuf grpc protoc-gen-grpc-java
+   ```
+
+2. **Compile your project:**
+   ```sh
+   mvn compile
+   ```
+
+**Troubleshooting: Missing proto/gRPC Java classes**
+If you see errors like `cannot find symbol` for classes such as `Message`, `FetchMessageRequest`, `PublishDataToBrokerRequest`, etc., it means the Java files for your protobuf messages and gRPC services were not generated or are not in the expected location.
+
+**How to fix:**
+1. Regenerate the Java and gRPC files manually:
+   ```sh
+   protoc --java_out=target/generated-sources/protobuf/java --proto_path=src/main/proto src/main/proto/*.proto
+   protoc --grpc-java_out=target/generated-sources/protobuf/grpc-java --proto_path=src/main/proto src/main/proto/*.proto
+   ```
+2. Re-run Maven:
+   ```sh
+   mvn compile
+   ```
+3. If you still get errors:
+   - Check that the generated `.java` files exist in `target/generated-sources/protobuf/java/proto/` and `target/generated-sources/protobuf/grpc-java/proto/`.
+   - Make sure your IDE recognizes these as source folders (sometimes you need to mark them as such).
+
+  ```
+
