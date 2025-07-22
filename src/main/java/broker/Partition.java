@@ -29,8 +29,14 @@ public class Partition {
     }
 
     public int appendRecordBatch(RecordBatch batch) throws IOException {
-        return this.log.appendRecordBatch(batch);
+        int startOffset = this.log.appendRecordBatch(batch);
+        currentOffset.addAndGet(batch.getRecordCount());
+        return startOffset;
     }
+    public int getNextOffset() {
+        return currentOffset.getAndIncrement();
+    }
+
 
     public int getCurrentOffset() {
         return currentOffset.get();
