@@ -5,12 +5,11 @@ import producer.RecordBatch;
 import producer.ProducerRecord;
 import producer.ProducerRecordCodec;
 import proto.Message;
+import proto.Topic;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.List;
-import java.util.ArrayList;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Broker {
@@ -19,7 +18,10 @@ public class Broker {
     private int port; // ex: port 8080
     private int numPartitions;
     private List<Partition> partitions;
+    private int partitionIdCounter = 0;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
+
+    Map<String, List<Partition>> topicMetadata;
 
     public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
         this.brokerId = brokerId;
@@ -27,10 +29,11 @@ public class Broker {
         this.port = port;
         this.numPartitions = numPartitions;
         this.partitions = new ArrayList<>();
+        this.topicMetadata = new HashMap<>();
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            partitions.add(new Partition(i));
+            partitions.add(new Partition(partitionIdCounter++));
         }
     }
 
@@ -40,6 +43,21 @@ public class Broker {
 
     public Broker() throws IOException {
         this("BROKER-1", "localhost", 50051, 3); // Default to 3 partitions
+    }
+
+    public void createTopics(Collection<Topic> topics) throws IOException {
+        // right now just worry about creating 1 topic
+        String topicName = topics.stream().toList().get(0).getTopicName();
+        int numPartitions = topics.stream().toList().get(0).getNumPartitions();
+        int replicationFactor = topics.stream().toList().get(0).getReplicationFactor();
+
+        ArrayList<Partition> partitions = new ArrayList<>();
+        for (int i = 0; i < numPartitions; i++) {
+            partitions.add(new Partition(partitionIdCounter++));
+        }
+
+        topicMetadata.put(topicName, partitions);
+        Logger.info("BROKER: Create topics completed successfully.");
     }
 
     /**
