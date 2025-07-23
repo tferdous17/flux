@@ -46,11 +46,11 @@ public class FluxAdmin implements Admin {
         List<Topic> newTopicsList = new ArrayList<>();
         for (NewTopic topic : topics) {
             Topic newTopic = Topic
-                                        .newBuilder()
-                                        .setTopicName(topic.name())
-                                        .setNumPartitions(topic.numPartitions())
-                                        .setReplicationFactor(topic.replicationFactor())
-                                        .build();
+                                .newBuilder()
+                                .setTopicName(topic.name())
+                                .setNumPartitions(topic.numPartitions())
+                                .setReplicationFactor(topic.replicationFactor())
+                                .build();
             newTopicsList.add(newTopic);
         }
 
