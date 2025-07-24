@@ -35,12 +35,17 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
     }
 
     @Override
+    public boolean topicExists(String topicName) {
+        return topicMetadata.containsKey(topicName);
+    }
+
+    @Override
     public Set<String> getActiveTopics() {
         return topicMetadata.keySet();
     }
 
     @Override
-    public List<Partition> getPartitions(String topicName) {
+    public List<Partition> getPartitionsFor(String topicName) {
         if (!topicMetadata.containsKey(topicName)) {
             throw new IllegalArgumentException("Topic " + topicName + " does not exist. Create it first or check for typos.");
         }
