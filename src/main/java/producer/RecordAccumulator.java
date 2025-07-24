@@ -1,5 +1,10 @@
 package producer;
 
+import commons.IntRange;
+import commons.utils.PartitionSelector;
+import exceptions.InvalidPartitionException;
+import metadata.InMemoryTopicMetadataRepository;
+import metadata.TopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
@@ -13,18 +18,21 @@ public class RecordAccumulator {
     private final int batchSize;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
-    private final AtomicInteger roundRobinCounter = new AtomicInteger(0);
+
+    private TopicMetadataRepository topicMetadata;
 
     public RecordAccumulator(int numPartitions) {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
+        this.topicMetadata = new InMemoryTopicMetadataRepository();
     }
 
     public RecordAccumulator(int batchSize, int numPartitions) {
         this.batchSize = validateBatchSize(batchSize);
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
+        this.topicMetadata = new InMemoryTopicMetadataRepository();
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
@@ -32,40 +40,30 @@ public class RecordAccumulator {
         return new RecordBatch(batchSize);
     }
 
-    //TODO: Broker class missing
     public boolean flush() {
         Logger.info("Flushing the batch to the broker (Stubbed out)");
         return true;
     }
 
+    // TODO: There is a chance for refactoring here. Since we're deserializing a bit prematurely here, we can just
+    //       move the logic into the FluxProducer class since we have access to the pre-serialized record there
+    //       and basically "inline" the buffering. I.e., all the buffering mechanisms + partition routing can be
+    //       moved to FluxProducer. Come back to this in a later ticket/PR.
     /**
      * Extract partition information from a serialized ProducerRecord
      */
     private int extractPartitionFromRecord(byte[] serializedRecord) {
-        try {
-            // Deserialize to get the ProducerRecord and extract partition info
-            ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
-                    serializedRecord, String.class, String.class);
-            
-            // If the record has a specific partition set, use it
-            // Otherwise, we'll let the broker handle partition selection
-            Integer partitionNumber = record.getPartitionNumber();
-            if (partitionNumber != null) {
-                return partitionNumber % numPartitions; // Ensure partition is within bounds
-            }
-            
-            // For records with a key, use MurmurHash2 for consistent hashing
-            String key = record.getKey();
-            if (key != null && !key.isEmpty()) {
-                return MurmurHash2.selectPartition(key, numPartitions);
-            } else {
-                // Round-robin for keyless records
-                return roundRobinCounter.getAndIncrement() % numPartitions;
-            }
-        } catch (Exception e) {
-            Logger.warn("Failed to extract partition from record, using round-robin: " + e.getMessage());
-            return roundRobinCounter.getAndIncrement() % numPartitions;
-        }
+        // Deserialize to get the ProducerRecord and extract partition info
+        ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
+                serializedRecord, String.class, String.class);
+
+        return PartitionSelector.getPartitionNumberForRecord(
+                topicMetadata,
+                record.getPartitionNumber(),
+                record.getKey(),
+                record.getTopic(),
+                numPartitions
+        );
     }
 
     /*
