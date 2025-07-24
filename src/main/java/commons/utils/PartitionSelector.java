@@ -28,7 +28,7 @@ public class PartitionSelector {
             // For records with a key, use MurmurHash2 for consistent hashing
             if (key != null && !key.isEmpty()) {
                 // Must ensure that it selects a partition within this topic's range.
-                return MurmurHash2.selectPartitionWithinRange(key, min, max);
+                return selectPartitionWithinRangeUsingMurmurHash2(key, min, max);
             } else {
                 // At this point: Yes topic, no partition #, no key. Default to round-robin within valid range.
                 // Jump to bottom of file for example of how this calculation works.
@@ -52,7 +52,7 @@ public class PartitionSelector {
         if (partitionNumber == null) {
             // For records with a key, use MurmurHash2 for consistent hashing
             if (key != null && !key.isEmpty()) {
-                return MurmurHash2.selectPartition(key, numPartitions);
+                return selectPartitionUsingMurmurHash2(key, numPartitions);
             } else {
                 // At this point: No topic, no partition #, no key. Default to round-robin among all partitions in system.
                 // TODO: Should we insert topic-less records into partitions that belong to a particular topic? How to handle? Come back later
@@ -65,6 +65,29 @@ public class PartitionSelector {
                 return roundRobinCounter.getAndIncrement() % numPartitions;
             }
         }
+    }
+
+    // If key is null/empty, returns 0 (default partition).
+    // Otherwise, returns MurmurHash2(key) % numPartitions.
+    public static int selectPartitionUsingMurmurHash2(String key, int numPartitions) {
+        if (key == null || key.isEmpty()) {
+            return 0;
+        }
+        int hash = MurmurHash2.hash(key);
+        // Turn the hash into a positive number.
+        // The & 0x7fffffff operation is a faster way of doing Math.abs()
+        // that also handles Integer.MIN_VALUE correctly.
+        int positiveHash = hash & 0x7fffffff;
+        return positiveHash % numPartitions;
+    }
+
+    public static int selectPartitionWithinRangeUsingMurmurHash2(String key, int min, int max) {
+        if (key == null || key.isEmpty()) {
+            return min; // Instead of 0, our default partition will be the partition w/ the min ID
+        }
+        int hash = MurmurHash2.hash(key);
+        int positiveHash = hash & 0x7fffffff;
+        return min + (positiveHash % max - min + 1);
     }
 }
 
