@@ -74,4 +74,16 @@ public final class MurmurHash2 {
         int positiveHash = hash & 0x7fffffff;
         return positiveHash % numPartitions;
     }
+
+    public static int selectPartitionWithinRange(String key, int min, int max) {
+        if (key == null || key.isEmpty()) {
+            return min;
+        }
+        int hash = MurmurHash2.hash(key);
+        // Turn the hash into a positive number.
+        // The & 0x7fffffff operation is a faster way of doing Math.abs()
+        // that also handles Integer.MIN_VALUE correctly.
+        int positiveHash = hash & 0x7fffffff;
+        return min + (positiveHash % max - min + 1);
+    }
 }
