@@ -6,7 +6,10 @@ import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
+import metadata.BrokerMetadataRepository;
+import metadata.InMemoryBrokerMetadataRepository;
 import org.tinylog.Logger;
+import producer.IntermediaryRecord;
 import proto.*;
 
 import java.io.IOException;
@@ -79,16 +82,19 @@ public class BrokerServer {
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
-            List<byte[]> data = req
-                    .getDataList()
+            List<IntermediaryRecord> records = req
+                    .getRecordsList()
                     .stream()
-                    .map(ByteString::toByteArray)
+                    .map(record -> new IntermediaryRecord(
+                            record.getTargetPartition(),
+                            record.getData().toByteArray()
+                            )
+                    )
                     .toList();
 
-            System.out.println("DATA LIST: " + data);
             try {
                 Logger.info("Producing messages");
-                int recordOffset = broker.produceMessages(data);
+                int recordOffset = broker.produceMessages(records);
                 ackBuilder
                         .setAcknowledgement("ACK: Data received successfully.")
                         .setStatus(Status.SUCCESS)
@@ -165,7 +171,7 @@ public class BrokerServer {
 
             resultBuilder.setAcknowledgement("topic creation request received");
             resultBuilder.setStatus(Status.SUCCESS);
-            resultBuilder.setTotalNumPartitionsCreated(req.getTopicsCount());
+            resultBuilder.setTotalNumPartitionsCreated(1);
             resultBuilder.addTopicNames("all topic names");
 
             responseObserver.onNext(resultBuilder.build()); // this just sends the response back to the client

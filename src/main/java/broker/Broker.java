@@ -1,11 +1,12 @@
 package broker;
 
+import commons.FluxTopic;
+import metadata.InMemoryBrokerMetadataRepository;
+import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
+import producer.IntermediaryRecord;
 import producer.RecordBatch;
-import producer.ProducerRecord;
-import producer.ProducerRecordCodec;
 import proto.Message;
-import proto.Topic;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -21,7 +22,7 @@ public class Broker {
     private int partitionIdCounter = 0;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
 
-    Map<String, List<Partition>> topicMetadata;
+    private static final int MAX_REPLICATION_FACTOR = 3;
 
     public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
         this.brokerId = brokerId;
@@ -29,11 +30,10 @@ public class Broker {
         this.port = port;
         this.numPartitions = numPartitions;
         this.partitions = new ArrayList<>();
-        this.topicMetadata = new HashMap<>();
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            partitions.add(new Partition(partitionIdCounter++));
+            partitions.add(new Partition(++partitionIdCounter));
         }
     }
 
@@ -42,64 +42,69 @@ public class Broker {
     }
 
     public Broker() throws IOException {
-        this("BROKER-1", "localhost", 50051, 3); // Default to 3 partitions
+        // Default to 1 partition since all records technically require a topic field.
+        this("BROKER-1", "localhost", 50051, 1);
     }
 
-    public void createTopics(Collection<Topic> topics) throws IOException {
+    // TODO: Finish below of whatever i was doing
+    public void createTopics(Collection<proto.Topic> topics) throws IOException {
         // right now just worry about creating 1 topic
-        String topicName = topics.stream().toList().get(0).getTopicName();
-        int numPartitions = topics.stream().toList().get(0).getNumPartitions();
-        int replicationFactor = topics.stream().toList().get(0).getReplicationFactor();
+        String topicName = topics.stream().toList().getFirst().getTopicName();
+        int numPartitionsToCreate = topics.stream().toList().getFirst().getNumPartitions();
+        int replicationFactor = topics.stream().toList().getFirst().getReplicationFactor();
 
-        ArrayList<Partition> partitions = new ArrayList<>();
-        for (int i = 0; i < numPartitions; i++) {
-            partitions.add(new Partition(partitionIdCounter++));
+        // Will throw runtime exception if it can not validate this creation request
+        validateTopicCreation(topicName, numPartitions, replicationFactor);
+
+        List<Partition> topicPartitions = new ArrayList<>();
+        for (int i = 0; i < numPartitionsToCreate; i++) {
+            Partition p = new Partition(++partitionIdCounter);
+            this.partitions.add(p);
+            topicPartitions.add(p);
+            this.numPartitions++;
         }
 
-        topicMetadata.put(topicName, partitions);
+        FluxTopic topic = new FluxTopic(topicName, topicPartitions, replicationFactor);
+        InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
+        // TODO: Replace when metadata api is implemented
+        InMemoryBrokerMetadataRepository.getInstance().addBroker(this.getBrokerId(), this);
         Logger.info("BROKER: Create topics completed successfully.");
     }
 
-    /**
-     * Validates that the partition number is within valid range.
-     * Partition selection should be done by the producer, not the broker.
-     */
-    private void validatePartition(int partitionId) {
-        if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
-                    ". Valid range: 0-" + (numPartitions - 1));
+
+    private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
+        if (topicName == null || topicName.isEmpty()) {
+            throw new IllegalArgumentException("Cannot create topic with empty name.");
+        }
+        if (InMemoryTopicMetadataRepository.getInstance().getActiveTopics().contains(topicName)) {
+            throw new IllegalArgumentException("Topic already exists: %s".formatted(topicName));
+        }
+        if (numPartitions < 1) {
+            throw new IllegalArgumentException("Number of partitions can not be less than 1: %d".formatted(numPartitions));
+        }
+        if (replicationFactor < 0 || replicationFactor > MAX_REPLICATION_FACTOR) {
+            throw new IllegalArgumentException("Replication factor can not be negative or >%d: %d".formatted(MAX_REPLICATION_FACTOR, replicationFactor));
         }
     }
 
-    public int produceSingleMessage(byte[] record) throws IOException {
-        // Deserialize the record to extract key for partition selection
-        ProducerRecord<String, String> prodRecord = ProducerRecordCodec.deserialize(
-                record, String.class, String.class);
-
-        // Use the partition already selected by the producer
-        // fallback to partition 0
-        int targetPartitionId = prodRecord.getPartitionNumber() != null ? prodRecord.getPartitionNumber() : 0;
-
-        validatePartition(targetPartitionId);
-        Partition targetPartition = partitions.get(targetPartitionId);
-
+    public int produceSingleMessage(int targetPartitionId, byte[] record) throws IOException {
+        // Note: Partition IDs are NOT 0-indexed
+        Partition targetPartition = partitions.get(targetPartitionId - 1);
         int currRecordOffset = targetPartition.getNextOffset();
 
         // Update record offset in header (first 4 bytes)
         ByteBuffer buffer = ByteBuffer.wrap(record);
         buffer.putInt(0, currRecordOffset);
 
-        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition " + targetPartitionId +
-                " with key: " + prodRecord.getKey());
-        Logger.info("PRODUCE SINGLE MESSAGE: " + Arrays.toString(buffer.array()));
+        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition %d | DATA = %s".formatted(targetPartitionId, Arrays.toString(buffer.array())));
 
         targetPartition.appendSingleRecord(record, currRecordOffset);
-        Logger.info("1. Appended record to broker partition " + targetPartitionId);
+        Logger.info("1. Appended record to broker partition %d".formatted(targetPartitionId));
 
         return currRecordOffset;
     }
 
-    // TODO: Replace mock implementation when gRPC is implemented
+    // ! Not currently using this below method, general functionality already handled by the other produceMessages()
     public void produceMessages(RecordBatch batch) throws IOException {
         // For batches, use round-robin distribution since we can't easily extract keys
         // from the batch without decomposing it
@@ -107,18 +112,23 @@ public class Broker {
         Partition targetPartition = partitions.get(targetPartitionId);
 
         targetPartition.appendRecordBatch(batch);
-        Logger.info("Appended record batch to broker partition " + targetPartitionId);
+        Logger.info("Appended record batch to broker partition %d".formatted(targetPartitionId));
     }
 
-    public int produceMessages(List<byte[]> messages) throws IOException {
+    public int produceMessages(List<IntermediaryRecord> messages) throws IOException {
         // we can just call the produceSingleMessage() for each byte[] in messages
         int counter = 0;
         int lastRecordOffset = -1;
-        for (byte[] message : messages) {
-            lastRecordOffset = produceSingleMessage(message);
+        for (IntermediaryRecord record : messages) {
+            lastRecordOffset = produceSingleMessage(record.targetPartition(), record.data());
             counter++;
         }
-        Logger.info("Appended " + counter + " records to broker.");
+        Logger.info("Appended %d records to broker.".formatted(counter));
+        System.out.println("PRINTING # OF RECORDS PER PARTITION:");
+        for (Partition partition : partitions) {
+            System.out.println("Partition " + partition.getPartitionId() + " contains: " + partition.getCurrentOffset() + " records");
+        }
+
         return lastRecordOffset;
     }
 
@@ -133,8 +143,7 @@ public class Broker {
      */
     public Message consumeMessage(int partitionId, int startingOffset) throws IOException {
         if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
-                    ". Valid range: 0-" + (numPartitions - 1));
+            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
         }
 
         Partition targetPartition = partitions.get(partitionId);
@@ -162,8 +171,7 @@ public class Broker {
      */
     public Partition getPartition(int partitionId) {
         if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: " + partitionId +
-                    ". Valid range: 0-" + (numPartitions - 1));
+            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
         }
         return partitions.get(partitionId);
     }
