@@ -1,6 +1,7 @@
 package commons.utils;
 
 import commons.IntRange;
+import exceptions.InvalidTopicException;
 import metadata.TopicMetadataRepository;
 import producer.MurmurHash2;
 
@@ -24,7 +25,7 @@ public class PartitionSelector {
         if (topicName != null && !topicName.isEmpty() && topicMetadata.topicExists(topicName)) {
             return getPartitionNumWhenTopicExists(topicMetadata, partitionNumber, key, topicName);
         } else {
-            return getPartitionNumWhenTopicDoesNotExist(topicMetadata, partitionNumber, key, numPartitions);
+            throw new InvalidTopicException(topicName);
         }
     }
 
@@ -62,6 +63,7 @@ public class PartitionSelector {
         }
     }
 
+    // Below method was replaced by just throwing an InvalidTopicException, however this can be used if we just want to throw records into any existing partition.
     private static int getPartitionNumWhenTopicDoesNotExist(TopicMetadataRepository topicMetadata, Integer partitionNumber, String key, int numPartitions) {
         // No partition number either, attempt key-based hashing.
         if (partitionNumber == null) {
