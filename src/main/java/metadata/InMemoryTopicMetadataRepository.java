@@ -20,6 +20,18 @@ import java.util.concurrent.ConcurrentMap;
 public class InMemoryTopicMetadataRepository implements TopicMetadataRepository {
     private ConcurrentMap<String, FluxTopic> topicMetadata = new ConcurrentHashMap<>();
 
+    private InMemoryTopicMetadataRepository() {
+        throw new AssertionError("Can not instantiate InMemoryTopicMetadataRepository.");
+    }
+
+    private static class SingletonHolder {
+        private static final InMemoryTopicMetadataRepository INSTANCE = new InMemoryTopicMetadataRepository();
+    }
+
+    public static InMemoryTopicMetadataRepository getInstance() {
+        return SingletonHolder.INSTANCE;
+    }
+
     @Override
     public void addNewTopic(String topicName, FluxTopic topic) {
         topicMetadata.put(topicName, topic);
