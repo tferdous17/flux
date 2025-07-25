@@ -10,7 +10,12 @@ service PublishToBroker {
 }
 
 message PublishDataToBrokerRequest {
-  repeated bytes data = 1;
+  repeated Record records = 1;
+}
+
+message Record {
+  int32 targetPartition = 1;
+  bytes data = 2;
 }
 
 message BrokerToPublisherAck {
