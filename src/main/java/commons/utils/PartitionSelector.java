@@ -9,14 +9,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Utility class to determine which partition a particular record should go to.
+ *
  * Since multiple fields can help determine partition number, the priority ordering is as follows:
  *      1. If a partition # is passed in to the record already, this takes top priority.
- *          1a. Invalid partition numbers automatically get defaulted to round-robin.
- *      2. If no partition number, attempt key-based hashing.
- *      3. If no partition number and no key, default to round-robin.
+ *      2. If invalid partition number (out of range/null), attempt key-based hashing.
+ *      3. If above two methods didn't work, default to round-robin.
  *      4. If a topic is also passed in, this just narrows down which partitions we can select for the above operations.
- *
- * Note: The print statements are just for verifying correct selection. Should remove them at a later time when no longer necessary.
  */
 public class PartitionSelector {
     private static AtomicInteger roundRobinCounter = new AtomicInteger(0);
@@ -35,35 +33,25 @@ public class PartitionSelector {
         int max = validPartitionIdRange.end();
         int range = max - min + 1;
 
-        // No partition number, attempt key-based hashing.
-        if (partitionNumber == null) {
-            // For records with a key, use MurmurHash2 for consistent hashing
-            if (key != null && !key.isEmpty()) {
-                // Must ensure that it selects a partition within this topic's range.
-                return selectPartitionWithinRangeUsingMurmurHash2(key, min, max);
-            } else {
-                // At this point: Yes topic, no partition #, no key. Default to round-robin within valid range.
-                // Jump to bottom of file for example of how this calculation works.
-                System.out.println("round robin triggering under topic exists, no partition, no key.");
-                System.out.printf("round robin counter = %d minPartition = %d maxPartition = %d range = %d%n", roundRobinCounter.getAndIncrement(), min, max, range);
-                return ((roundRobinCounter.getAndIncrement() - min) % range + range) % range + min;
-            }
-        } else { // Validate partition num is within topic's range of partitions.
-            // No need to handle key here because partition num takes priority over key in partition selection.
-            if (min <= partitionNumber && partitionNumber <= max) {
-                return partitionNumber;
-            } else {
-                // What if it's out of range? Two subcases here:
-                // 1) Fallback to round-robin among this topic's partitions anyway.
-                // or 2) Throw InvalidPartitionException.
-                System.out.println("round robin triggering under topic exists, passed in partition #, no key.");
-                System.out.printf("round robin counter = %d minPartition = %d maxPartition = %d range = %d%n", roundRobinCounter.getAndIncrement(), min, max, range);
-                return ((roundRobinCounter.getAndIncrement() - min) % range + range) % range + min;
-            }
+        // Partition number is valid and within range.
+        if (partitionNumber != null && (min <= partitionNumber && partitionNumber <= max))  {
+            return partitionNumber;
         }
+
+        // Either partition number is null or it does not fall within the topic's range of partitions
+        // -> Resort to key-based hashing.
+        if (key != null && !key.isEmpty()) {
+            // Key is valid, ensure that it selects a partition within this topic's range.
+            return selectPartitionWithinRangeUsingMurmurHash2(key, min, max);
+        }
+
+        // At this point: Yes topic, no valid partition # and no valid key. Default to round-robin within valid range.
+        // Jump to bottom of file for example of how this calculation works.
+        return ((roundRobinCounter.getAndIncrement() - min) % range + range) % range + min;
     }
 
-    // Below method was replaced by just throwing an InvalidTopicException, however this can be used if we just want to throw records into any existing partition.
+    // ! IGNORE BELOW METHOD
+    // This was replaced by just throwing an InvalidTopicException, however this can be used if we just want to throw records into any existing partition.
     private static int getPartitionNumWhenTopicDoesNotExist(TopicMetadataRepository topicMetadata, Integer partitionNumber, String key, int numPartitions) {
         // No partition number either, attempt key-based hashing.
         if (partitionNumber == null) {
