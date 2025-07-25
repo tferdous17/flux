@@ -21,15 +21,16 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
     private ConcurrentMap<String, FluxTopic> topicMetadata = new ConcurrentHashMap<>();
 
     private InMemoryTopicMetadataRepository() {
-        throw new AssertionError("Can not instantiate InMemoryTopicMetadataRepository.");
     }
 
-    private static class SingletonHolder {
+    // Bill Pugh Singleton -- loads the SingletonHelper and subsequently creates the InMemoryTopicMetadataRepository instance
+    // itself *only* when someone calls getInstance(). Avoids needing to do manual synchronization for multithreaded scenarios.
+    private static class SingletonHelper {
         private static final InMemoryTopicMetadataRepository INSTANCE = new InMemoryTopicMetadataRepository();
     }
 
     public static InMemoryTopicMetadataRepository getInstance() {
-        return SingletonHolder.INSTANCE;
+        return SingletonHelper.INSTANCE;
     }
 
     @Override
@@ -71,8 +72,8 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
         if (!topicMetadata.containsKey(topicName)) {
             throw new IllegalArgumentException("Topic " + topicName + " does not exist. Create it first or check for typos.");
         }
-        int startPartitionId = topicMetadata.get(topicName).getPartitions().get(0).getPartitionId();
-        int endPartitionId = topicMetadata.get(topicName).getPartitions().get(topicMetadata.size() - 1).getPartitionId();
+        int startPartitionId = topicMetadata.get(topicName).getPartitions().getFirst().getPartitionId();
+        int endPartitionId = topicMetadata.get(topicName).getPartitions().getLast().getPartitionId();
         return new IntRange(startPartitionId, endPartitionId);
     }
 }
