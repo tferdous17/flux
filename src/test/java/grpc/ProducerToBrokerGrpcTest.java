@@ -1,11 +1,15 @@
 package grpc;
 
+import admin.Admin;
+import admin.FluxAdmin;
+import admin.NewTopic;
 import broker.Broker;
 import org.junit.jupiter.api.Test;
 import producer.FluxProducer;
 import producer.ProducerRecord;
 
 import java.io.IOException;
+import java.util.List;
 
 public class ProducerToBrokerGrpcTest {
 
@@ -21,6 +25,10 @@ public class ProducerToBrokerGrpcTest {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+
+        Admin admin = FluxAdmin.create(List.of("localhost:50051")); // bootstrap server
+        NewTopic topic = new NewTopic("test-topic", 3, 1);
+        admin.createTopics(List.of(topic));
 
         // Start client
         startClient();
@@ -51,10 +59,28 @@ public class ProducerToBrokerGrpcTest {
 
     // Make sure to manually close when done with testing this
     private static void startClient() {
-        FluxProducer<String, String> producer = new FluxProducer<>(30, 60);
+        FluxProducer<String, String> producer = new FluxProducer<>(15, 60);
         while (true) {
             String t = randStringGen();
-            ProducerRecord<String, String> record = new ProducerRecord<>("topic", t);
+
+            // ! UNCOMMENT EACH RECORD BELOW TO TEST EACH SCENARIO FOR PARTITION SELECTION
+            // Note, with the topic creation in testProducerToBrokerGrpcFlow(), the topic's partitions id range from [2,4] inclusive
+            // Topic 1 is the default partition as set by default constructor for the Broker class.
+
+            // Valid topic, partition #, and key. Should end up in the designated partition.
+            ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", 2, t, "test-value");
+
+            // Valid topic and key, but no partition #. Should result in key-based hashing among topic's partitions.
+//            ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", t, "test-value");
+
+            // Valid topic, but invalid partition #. Should resort to key-based hashing.
+//            ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", -5, t, "test-value");
+
+            // Valid topic, but no partition # or key. Partition selection should default to round-robin among topic's partitions.
+//            ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", t);
+
+            // Invalid topic. Should immediately throw runtime exception.
+//            ProducerRecord<String, String> record = new ProducerRecord<>("nonexistenttopic", 2, t, "test-value");
             try {
                 producer.send(record);
                 Thread.sleep(500);
@@ -63,6 +89,5 @@ public class ProducerToBrokerGrpcTest {
             }
         }
     }
-
 
 }

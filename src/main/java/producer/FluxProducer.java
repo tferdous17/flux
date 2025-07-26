@@ -1,9 +1,12 @@
 package producer;
 
 import com.google.protobuf.ByteString;
+import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
+import metadata.InMemoryBrokerMetadataRepository;
+import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 import proto.BrokerToPublisherAck;
 import proto.PublishDataToBrokerRequest;
@@ -20,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 public class FluxProducer<K, V> implements Producer {
     private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
     private ManagedChannel channel;
-    List<byte[]> buffer;
+    List<IntermediaryRecord> buffer;
     private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
 
     public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
@@ -46,9 +49,20 @@ public class FluxProducer<K, V> implements Producer {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
+        // Determine target partition, and then serialize.
+        // TODO: using a repository class to accomplish this but replace w/ proper API in the future
+        int targetPartition = PartitionSelector.getPartitionNumberForRecord(
+                InMemoryTopicMetadataRepository.getInstance(),
+                record.getPartitionNumber(),
+                key.toString(),
+                record.getTopic(),
+                InMemoryBrokerMetadataRepository.getInstance().getNumberOfPartitionsById("BROKER-1") // must use this exact ID for testing
+        );
+        System.out.println("Record has target partition = " + targetPartition);
         // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
         byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
-        buffer.add(serializedData);
+
+        buffer.add(new IntermediaryRecord(targetPartition, serializedData));
         Logger.info("Record added to buffer.");
     }
 
@@ -64,17 +78,22 @@ public class FluxProducer<K, V> implements Producer {
             return;
         }
 
-        List<byte[]> bufferSnapshot = new ArrayList<>();
-        for (byte[] b : buffer) {
-            bufferSnapshot.add(b);
-        }
+        List<IntermediaryRecord> bufferSnapshot = new ArrayList<>(buffer);
         buffer.clear();
-
-        List<ByteString> byteStringList = bufferSnapshot.stream().map(ByteString::copyFrom).toList();
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                 .newBuilder()
-                .addAllData(byteStringList)
+                .addAllRecords(
+                        bufferSnapshot
+                        .stream()
+                        .map(r -> proto.Record
+                                .newBuilder()
+                                .setTargetPartition(r.targetPartition())
+                                .setData(ByteString.copyFrom(r.data()))
+                                .build()
+                        )
+                        .toList()
+                )
                 .build();
 
         System.out.println("SIZE OF REQ: " + request.getSerializedSize());
