@@ -1,16 +1,12 @@
 package producer;
 
-import commons.IntRange;
 import commons.utils.PartitionSelector;
-import exceptions.InvalidPartitionException;
 import metadata.InMemoryTopicMetadataRepository;
-import metadata.TopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
@@ -19,20 +15,16 @@ public class RecordAccumulator {
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
 
-    private TopicMetadataRepository topicMetadata;
-
     public RecordAccumulator(int numPartitions) {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
-        this.topicMetadata = new InMemoryTopicMetadataRepository();
     }
 
     public RecordAccumulator(int batchSize, int numPartitions) {
         this.batchSize = validateBatchSize(batchSize);
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
-        this.topicMetadata = new InMemoryTopicMetadataRepository();
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
@@ -58,7 +50,7 @@ public class RecordAccumulator {
                 serializedRecord, String.class, String.class);
 
         return PartitionSelector.getPartitionNumberForRecord(
-                topicMetadata,
+                InMemoryTopicMetadataRepository.getInstance(),
                 record.getPartitionNumber(),
                 record.getKey(),
                 record.getTopic(),

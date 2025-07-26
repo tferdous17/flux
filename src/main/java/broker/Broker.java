@@ -46,7 +46,6 @@ public class Broker {
         this("BROKER-1", "localhost", 50051, 1);
     }
 
-    // TODO: Finish below of whatever i was doing
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
         // right now just worry about creating 1 topic
         String topicName = topics.stream().toList().getFirst().getTopicName();
