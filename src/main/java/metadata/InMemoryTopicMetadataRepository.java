@@ -4,6 +4,7 @@ import broker.Partition;
 import commons.FluxTopic;
 import commons.IntRange;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +17,9 @@ import java.util.concurrent.ConcurrentMap;
  *
  * However, for simplicity reasons, we are (currently) implementing an in-memory approach to storing Topic metadata
  * using the Repository pattern. Down the line we will refactor to more closely align with Kafka's implementation.
+ *
+ * This is a Bill Pugh Singleton -- it loads the SingletonHelper and subsequently creates the InMemoryTopicMetadataRepository instance
+ * itself *only* when someone calls getInstance(). Avoids needing to do manual synchronization for multithreaded scenarios.
  */
 public class InMemoryTopicMetadataRepository implements TopicMetadataRepository {
     private ConcurrentMap<String, FluxTopic> topicMetadata = new ConcurrentHashMap<>();
@@ -23,8 +27,6 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
     private InMemoryTopicMetadataRepository() {
     }
 
-    // Bill Pugh Singleton -- loads the SingletonHelper and subsequently creates the InMemoryTopicMetadataRepository instance
-    // itself *only* when someone calls getInstance(). Avoids needing to do manual synchronization for multithreaded scenarios.
     private static class SingletonHelper {
         private static final InMemoryTopicMetadataRepository INSTANCE = new InMemoryTopicMetadataRepository();
     }
@@ -54,7 +56,7 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
 
     @Override
     public Set<String> getActiveTopics() {
-        return topicMetadata.keySet();
+        return Collections.unmodifiableSet(topicMetadata.keySet());
     }
 
     @Override

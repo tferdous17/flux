@@ -1,13 +1,10 @@
 package grpc;
 
 import broker.Broker;
-import com.google.protobuf.ByteString;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
-import metadata.BrokerMetadataRepository;
-import metadata.InMemoryBrokerMetadataRepository;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import proto.*;
