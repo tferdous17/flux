@@ -19,7 +19,7 @@ public class Broker {
     private int port; // ex: port 8080
     private int numPartitions;
     private List<Partition> partitions;
-    private int partitionIdCounter = 0;
+    private int partitionIdCounter = 1;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
 
     private static final int MAX_REPLICATION_FACTOR = 3;
@@ -33,7 +33,7 @@ public class Broker {
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            partitions.add(new Partition(++partitionIdCounter));
+            this.partitions.add(new Partition(partitionIdCounter++));
         }
     }
 
@@ -48,16 +48,17 @@ public class Broker {
 
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
         // right now just worry about creating 1 topic
-        String topicName = topics.stream().toList().getFirst().getTopicName();
-        int numPartitionsToCreate = topics.stream().toList().getFirst().getNumPartitions();
-        int replicationFactor = topics.stream().toList().getFirst().getReplicationFactor();
+        proto.Topic firstTopic = topics.stream().findFirst().orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
+        String topicName = firstTopic.getTopicName();
+        int numPartitionsToCreate = firstTopic.getNumPartitions();
+        int replicationFactor = firstTopic.getReplicationFactor();
 
         // Will throw runtime exception if it can not validate this creation request
         validateTopicCreation(topicName, numPartitions, replicationFactor);
 
         List<Partition> topicPartitions = new ArrayList<>();
         for (int i = 0; i < numPartitionsToCreate; i++) {
-            Partition p = new Partition(++partitionIdCounter);
+            Partition p = new Partition(partitionIdCounter++);
             this.partitions.add(p);
             topicPartitions.add(p);
             this.numPartitions++;
@@ -141,8 +142,8 @@ public class Broker {
      * Consume a message from a specific partition at the given offset
      */
     public Message consumeMessage(int partitionId, int startingOffset) throws IOException {
-        if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
+        if (partitionId < 1 || partitionId >= numPartitions) {
+            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions - 1));
         }
 
         Partition targetPartition = partitions.get(partitionId);
@@ -169,8 +170,8 @@ public class Broker {
      * Get a specific partition by ID
      */
     public Partition getPartition(int partitionId) {
-        if (partitionId < 0 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
+        if (partitionId < 1 || partitionId >= numPartitions) {
+            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions - 1));
         }
         return partitions.get(partitionId);
     }
