@@ -43,8 +43,7 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
     @Override
     public boolean deleteTopic(String topicName) {
         if (topicMetadata.containsKey(topicName)) {
-            topicMetadata.remove(topicName);
-            return true;
+            return topicMetadata.remove(topicName) != null;
         }
         return false;
     }
