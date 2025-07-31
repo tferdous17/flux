@@ -62,7 +62,7 @@ public class PartitionSelector {
                 // At this point: No topic, no partition #, no key. Default to round-robin among all partitions in system.
                 // TODO: Should we insert topic-less records into partitions that belong to a particular topic? How to handle? Come back later
                 System.out.println("round robin triggering under NO topic, NO partition, NO key.");
-                System.out.printf("round robin counter = %d, numPartitions = %d", roundRobinCounter.getAndIncrement(), numPartitions);
+                System.out.printf("round robin counter = %d, numPartitions = %d", roundRobinCounter.get(), numPartitions);
                 return roundRobinCounter.getAndIncrement() % numPartitions;
             }
         } else { // Validate partition number
