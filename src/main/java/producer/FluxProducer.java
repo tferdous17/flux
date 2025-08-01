@@ -5,13 +5,9 @@ import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import metadata.InMemoryBrokerMetadataRepository;
 import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
-import proto.BrokerToPublisherAck;
-import proto.PublishDataToBrokerRequest;
-import proto.PublishToBrokerGrpc;
-import proto.Status;
+import proto.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -22,13 +18,16 @@ import java.util.concurrent.TimeUnit;
 
 public class FluxProducer<K, V> implements Producer {
     private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
+    private final MetadataServiceGrpc.MetadataServiceBlockingStub metadataBlockingStub;
     private ManagedChannel channel;
+
     List<IntermediaryRecord> buffer;
     private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
 
     public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = PublishToBrokerGrpc.newBlockingStub(channel);
+        metadataBlockingStub = MetadataServiceGrpc.newBlockingStub(channel);
         buffer = new ArrayList<>();
         scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
     }
@@ -49,14 +48,17 @@ public class FluxProducer<K, V> implements Producer {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
+        // fetch our broker's num of partitions to help determine target partition in round-robin scenario
+        FetchBrokerMetadataResponse brokerMetadataResponse = metadataBlockingStub
+                .fetchBrokerMetadata(FetchBrokerMetadataRequest.newBuilder().build());
+
         // Determine target partition, and then serialize.
-        // TODO: using a repository class to accomplish this but replace w/ proper API in the future
         int targetPartition = PartitionSelector.getPartitionNumberForRecord(
                 InMemoryTopicMetadataRepository.getInstance(),
                 record.getPartitionNumber(),
                 key.toString(),
                 record.getTopic(),
-                InMemoryBrokerMetadataRepository.getInstance().getNumberOfPartitionsById("BROKER-1") // must use this exact ID for testing
+                brokerMetadataResponse.getNumPartitions() // must use this exact ID for testing
         );
         System.out.println("Record has target partition = " + targetPartition);
         // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
