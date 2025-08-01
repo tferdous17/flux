@@ -3,6 +3,7 @@ package grpc;
 import broker.Broker;
 import grpc.services.ConsumerServiceImpl;
 import grpc.services.CreateTopicsServiceImpl;
+import grpc.services.MetadataServiceImpl;
 import grpc.services.ProducerServiceImpl;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -23,12 +24,13 @@ public class BrokerServer {
 
     public void start(int port) throws IOException {
 
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(6);
         server = Grpc.newServerBuilderForPort(port, InsecureServerCredentials.create())
                 .executor(executor)
                 .addService(new ProducerServiceImpl(this.broker))
                 .addService(new ConsumerServiceImpl(this.broker))
                 .addService(new CreateTopicsServiceImpl(this.broker))
+                .addService(new MetadataServiceImpl(this.broker))
                 .build()
                 .start();
 
