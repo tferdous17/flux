@@ -1,12 +1,12 @@
 package grpc;
 
 import broker.Broker;
-import com.google.protobuf.ByteString;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
 import io.grpc.stub.StreamObserver;
 import org.tinylog.Logger;
+import producer.IntermediaryRecord;
 import proto.*;
 
 import java.io.IOException;
@@ -30,6 +30,7 @@ public class BrokerServer {
                 .executor(executor)
                 .addService(new PublishToBrokerImpl(this.broker))
                 .addService(new ConsumerServiceImpl(this.broker))
+                .addService(new CreateTopicsServiceImpl(this.broker))
                 .build()
                 .start();
 
@@ -78,16 +79,19 @@ public class BrokerServer {
         @Override
         public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
             BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
-            List<byte[]> data = req
-                    .getDataList()
+            List<IntermediaryRecord> records = req
+                    .getRecordsList()
                     .stream()
-                    .map(ByteString::toByteArray)
+                    .map(record -> new IntermediaryRecord(
+                            record.getTargetPartition(),
+                            record.getData().toByteArray()
+                            )
+                    )
                     .toList();
 
-            System.out.println("DATA LIST: " + data);
             try {
                 Logger.info("Producing messages");
-                int recordOffset = broker.produceMessages(data);
+                int recordOffset = broker.produceMessages(records);
                 ackBuilder
                         .setAcknowledgement("ACK: Data received successfully.")
                         .setStatus(Status.SUCCESS)
@@ -143,5 +147,33 @@ public class BrokerServer {
             responseObserver.onCompleted(); // lets the client know there are no more messages after this
 
         }
+    }
+
+    static class CreateTopicsServiceImpl extends CreateTopicsServiceGrpc.CreateTopicsServiceImplBase {
+        Broker broker;
+
+        public CreateTopicsServiceImpl(Broker broker) {
+            this.broker = broker;
+        }
+
+        @Override
+        public void createTopics(CreateTopicsRequest req, StreamObserver<CreateTopicsResult> responseObserver) {
+            CreateTopicsResult.Builder resultBuilder = CreateTopicsResult.newBuilder();
+
+            try {
+                this.broker.createTopics(req.getTopicsList());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+
+            resultBuilder.setAcknowledgement("topic creation request received");
+            resultBuilder.setStatus(Status.SUCCESS);
+            resultBuilder.setTotalNumPartitionsCreated(1);
+            resultBuilder.addTopicNames("all topic names");
+
+            responseObserver.onNext(resultBuilder.build()); // this just sends the response back to the client
+            responseObserver.onCompleted(); // lets the client know there are no more messages after this
+        }
+
     }
 }

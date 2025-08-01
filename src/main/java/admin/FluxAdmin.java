@@ -41,16 +41,20 @@ public class FluxAdmin implements Admin {
         return instance;
     }
 
+    // NOTE: We have 3 ways to represent a topic, all used for different purposes.
+    // proto.Topic -> used to build proto messages
+    // admin.NewTopic -> plain object to represent initial metadata when building our gRPC request
+    // commons.FluxTopic -> the *actual* topic within our system. contains partitions and other info
     @Override
     public void createTopics(Collection<NewTopic> topics) {
-        List<Topic> newTopicsList = new ArrayList<>();
+        List<proto.Topic> newTopicsList = new ArrayList<>();
         for (NewTopic topic : topics) {
-            Topic newTopic = Topic
-                                        .newBuilder()
-                                        .setTopicName(topic.name())
-                                        .setNumPartitions(topic.numPartitions())
-                                        .setReplicationFactor(topic.replicationFactor())
-                                        .build();
+            proto.Topic newTopic = proto.Topic
+                                    .newBuilder()
+                                    .setTopicName(topic.name())
+                                    .setNumPartitions(topic.numPartitions())
+                                    .setReplicationFactor(topic.replicationFactor())
+                                    .build();
             newTopicsList.add(newTopic);
         }
 
@@ -62,7 +66,7 @@ public class FluxAdmin implements Admin {
         CreateTopicsResult response;
         try {
             response = blockingStub.createTopics(request);
-            System.out.println("CreateTopicsRequest Status: " + response.getStatus());
+            System.out.println(response.toString());
         } catch (Exception e) {
             e.printStackTrace();
             return;
