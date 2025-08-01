@@ -9,10 +9,10 @@ import proto.Status;
 
 import java.io.IOException;
 
-public class CreateTopicsService extends CreateTopicsServiceGrpc.CreateTopicsServiceImplBase {
+public class CreateTopicsServiceImpl extends CreateTopicsServiceGrpc.CreateTopicsServiceImplBase {
     Broker broker;
 
-    public CreateTopicsService(Broker broker) {
+    public CreateTopicsServiceImpl(Broker broker) {
         this.broker = broker;
     }
 

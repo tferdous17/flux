@@ -12,10 +12,10 @@ import proto.Status;
 import java.io.IOException;
 import java.util.List;
 
-public class ProducerService extends PublishToBrokerGrpc.PublishToBrokerImplBase {
+public class ProducerServiceImpl extends PublishToBrokerGrpc.PublishToBrokerImplBase {
     Broker broker;
 
-    public ProducerService(Broker broker) {
+    public ProducerServiceImpl(Broker broker) {
         this.broker = broker;
     }
 

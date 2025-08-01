@@ -6,11 +6,11 @@ import proto.*;
 
 import java.io.IOException;
 
-public class ConsumerService extends ConsumerServiceGrpc.ConsumerServiceImplBase {
+public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImplBase {
     Broker broker;
     int nextOffset; // to read
 
-    public ConsumerService(Broker broker) {
+    public ConsumerServiceImpl(Broker broker) {
         this.broker = broker;
     }
 

@@ -1,9 +1,9 @@
 package grpc;
 
 import broker.Broker;
-import grpc.services.ConsumerService;
-import grpc.services.CreateTopicsService;
-import grpc.services.ProducerService;
+import grpc.services.ConsumerServiceImpl;
+import grpc.services.CreateTopicsServiceImpl;
+import grpc.services.ProducerServiceImpl;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
@@ -26,9 +26,9 @@ public class BrokerServer {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         server = Grpc.newServerBuilderForPort(port, InsecureServerCredentials.create())
                 .executor(executor)
-                .addService(new ProducerService(this.broker))
-                .addService(new ConsumerService(this.broker))
-                .addService(new CreateTopicsService(this.broker))
+                .addService(new ProducerServiceImpl(this.broker))
+                .addService(new ConsumerServiceImpl(this.broker))
+                .addService(new CreateTopicsServiceImpl(this.broker))
                 .build()
                 .start();
 
