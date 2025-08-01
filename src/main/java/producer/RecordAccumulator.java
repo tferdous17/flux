@@ -1,11 +1,12 @@
 package producer;
 
+import commons.utils.PartitionSelector;
+import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
@@ -13,7 +14,6 @@ public class RecordAccumulator {
     private final int batchSize;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
-    private final AtomicInteger roundRobinCounter = new AtomicInteger(0);
 
     public RecordAccumulator(int numPartitions) {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
@@ -32,40 +32,30 @@ public class RecordAccumulator {
         return new RecordBatch(batchSize);
     }
 
-    //TODO: Broker class missing
     public boolean flush() {
         Logger.info("Flushing the batch to the broker (Stubbed out)");
         return true;
     }
 
+    // TODO: There is a chance for refactoring here. Since we're deserializing a bit prematurely here, we can just
+    //       move the logic into the FluxProducer class since we have access to the pre-serialized record there
+    //       and basically "inline" the buffering. I.e., all the buffering mechanisms + partition routing can be
+    //       moved to FluxProducer. Come back to this in a later ticket/PR.
     /**
      * Extract partition information from a serialized ProducerRecord
      */
     private int extractPartitionFromRecord(byte[] serializedRecord) {
-        try {
-            // Deserialize to get the ProducerRecord and extract partition info
-            ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
-                    serializedRecord, String.class, String.class);
-            
-            // If the record has a specific partition set, use it
-            // Otherwise, we'll let the broker handle partition selection
-            Integer partitionNumber = record.getPartitionNumber();
-            if (partitionNumber != null) {
-                return partitionNumber % numPartitions; // Ensure partition is within bounds
-            }
-            
-            // For records with a key, use MurmurHash2 for consistent hashing
-            String key = record.getKey();
-            if (key != null && !key.isEmpty()) {
-                return MurmurHash2.selectPartition(key, numPartitions);
-            } else {
-                // Round-robin for keyless records
-                return roundRobinCounter.getAndIncrement() % numPartitions;
-            }
-        } catch (Exception e) {
-            Logger.warn("Failed to extract partition from record, using round-robin: " + e.getMessage());
-            return roundRobinCounter.getAndIncrement() % numPartitions;
-        }
+        // Deserialize to get the ProducerRecord and extract partition info
+        ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
+                serializedRecord, String.class, String.class);
+
+        return PartitionSelector.getPartitionNumberForRecord(
+                InMemoryTopicMetadataRepository.getInstance(),
+                record.getPartitionNumber(),
+                record.getKey(),
+                record.getTopic(),
+                numPartitions
+        );
     }
 
     /*
