@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+import "common.proto";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service MetadataService {
+  rpc FetchBrokerMetadata(FetchBrokerMetadataRequest) returns (FetchBrokerMetadataResponse);
+}
+
+message FetchBrokerMetadataRequest {}
+
+message FetchBrokerMetadataResponse {
+  string brokerId = 1;
+  string host = 2;
+  uint32 portNumber = 3;
+  uint32 numPartitions = 4;
+}
