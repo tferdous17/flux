@@ -7,8 +7,7 @@ import producer.FluxProducer;
 public class MetadataServiceTest {
 
     @Test
-    public void testMetadataService() {
-        // start up server first
+    public void testOnlyMetadataCacheAutoRefreshing() {
         Thread serverThread = new Thread(MetadataServiceTest::startServer);
         serverThread.start();
 
@@ -18,10 +17,6 @@ public class MetadataServiceTest {
             Thread.currentThread().interrupt();
         }
 
-    }
-
-    @Test
-    public void testOnlyMetadataCacheAutoRefreshing() {
         // This will print the initial metadata and then simply refresh (and log) the updated cache.
         // Change the interval inside FluxProducer--by default its 5 mins (change to 1 min for quicker testing).
         FluxProducer<String, String> producer = new FluxProducer<>(300, 300);
