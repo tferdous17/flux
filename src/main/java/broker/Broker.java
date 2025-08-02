@@ -1,7 +1,6 @@
 package broker;
 
 import commons.FluxTopic;
-import metadata.InMemoryBrokerMetadataRepository;
 import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
@@ -66,8 +65,6 @@ public class Broker {
 
         FluxTopic topic = new FluxTopic(topicName, topicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
-        // TODO: Replace when metadata api is implemented
-        InMemoryBrokerMetadataRepository.getInstance().addBroker(this.getBrokerId(), this);
         Logger.info("BROKER: Create topics completed successfully.");
     }
 
