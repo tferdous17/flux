@@ -9,7 +9,10 @@ import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
+import metadata.BrokerMetadataSnapshot;
 import metadata.InMemoryTopicMetadataRepository;
+import metadata.Metadata;
+import metadata.MetadataListener;
 import org.tinylog.Logger;
 import proto.*;
 
@@ -17,17 +20,16 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
-import java.util.concurrent.locks.StampedLock;
+import java.util.concurrent.atomic.AtomicReference;
 
-public class FluxProducer<K, V> implements Producer {
+public class FluxProducer<K, V> implements Producer, MetadataListener {
     private final PublishToBrokerGrpc.PublishToBrokerFutureStub publishToBrokerFutureStub;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
     private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(2);
-
-    private FetchBrokerMetadataResponse cachedBrokerMetadata; // read-heavy
-    private final StampedLock stampedLock = new StampedLock();
+    private final Metadata metadata;
+    private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
 
     public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
@@ -36,16 +38,10 @@ public class FluxProducer<K, V> implements Producer {
         buffer = new ArrayList<>();
 
         scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
-        scheduledExecutorService.scheduleWithFixedDelay(this::refreshCachedMetadata, 5, 5, TimeUnit.MINUTES);
 
-        // fetch metadata upon initialization and cache the metadata it needs later
-        FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
-        try {
-            cachedBrokerMetadata = metadataFutureStub.fetchBrokerMetadata(request).get();
-            printMetadataForTesting();
-        } catch (ExecutionException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        metadata = new Metadata(60);
+        cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
+        metadata.addListener(this);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -60,63 +56,12 @@ public class FluxProducer<K, V> implements Producer {
         System.out.println(cachedBrokerMetadata);
     }
 
-    /**
-     * To refresh the cache, we will be asynchronously fetching the metadata and upon success we will obtain
-     * an exclusive write lock and replace our cache w/ the updated metadata.
-     */
-    private void refreshCachedMetadata() {
-        Logger.info("REFRESHING CACHED BROKER METADATA");
-        FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
-        ListenableFuture<FetchBrokerMetadataResponse> future = metadataFutureStub.fetchBrokerMetadata(request);
-        Futures.addCallback(future, new FutureCallback<FetchBrokerMetadataResponse>() {
-            @Override
-            public void onSuccess(FetchBrokerMetadataResponse result) {
-                long stamp = stampedLock.writeLock();
-                try {
-                    cachedBrokerMetadata = result;
-                    Logger.info("SUCCESSFULLY REFRESHED CACHED BROKER METADATA");
-                } finally {
-                    stampedLock.unlockWrite(stamp);
-                }
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                Logger.error(t);
-            }
-        }, FluxExecutor.getExecutorService());
-    }
-
-    /**
-     *  We are doing optimistic reads since our metadata cache is read-heavy, and optimistic reads
-     *  allow us to perform reads without obtaining a full lock--ideal for scenarios like this.
-     *  NOTE: This assumes we will have minimal contention on our cache (i.e., read-write conflicts are expected to NOT be common)
-     *
-     *  If the `if` block triggers, it means that a conflict has occurred.
-     *  I.e., between the time of us doing the optimistic read and validating, another thread acquired a write lock
-     *  and modified the shared resource. In this case, we will fall back by acquiring an exclusive read lock on the cache.
-     *  Note there exists other fallback mechanisms like repeatedly retrying the read operation or exponential backoff to avoid overwhelming the system w/ retries
-     */
-    private int retrieveCurrentNumBrokerPartitions() {
-        long stamp = stampedLock.tryOptimisticRead();
-        int currentNumBrokerPartitions = cachedBrokerMetadata.getNumPartitions();
-        if (!stampedLock.validate(stamp)) {
-            stamp = stampedLock.readLock();
-            try {
-                currentNumBrokerPartitions = cachedBrokerMetadata.getNumPartitions();
-            } finally {
-                stampedLock.unlockRead(stamp);
-            }
-        }
-        return currentNumBrokerPartitions;
-    }
-
     @Override
     public void send(ProducerRecord record) throws IOException {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
-        int currentNumBrokerPartitions = retrieveCurrentNumBrokerPartitions();
+        int currentNumBrokerPartitions = cachedBrokerMetadata.get().getNumPartitions();
 
         // Determine target partition, and then serialize.
         int targetPartition = PartitionSelector.getPartitionNumberForRecord(
@@ -192,5 +137,13 @@ public class FluxProducer<K, V> implements Producer {
     public void close() {
         flushBuffer();
         channel.shutdownNow();
+    }
+
+    @Override
+    public void onUpdate(AtomicReference<BrokerMetadataSnapshot> newSnapshot) {
+        // Using an AtomicReference allows us to take advantage of hardware-level instructions, such as compare_and_swap,
+        // to ensure thread safety on our metadata cache while avoiding the use of locks
+        // (because locking can incur overhead and dampen performance a bit in multithreaded environments)
+        cachedBrokerMetadata.set(newSnapshot.get());
     }
 }
