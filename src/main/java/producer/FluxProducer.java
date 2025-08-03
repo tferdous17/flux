@@ -4,6 +4,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
+import commons.FluxExecutor;
 import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
@@ -35,7 +36,7 @@ public class FluxProducer<K, V> implements Producer {
         buffer = new ArrayList<>();
 
         scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
-        scheduledExecutorService.scheduleWithFixedDelay(this::refreshCachedMetadata, 1, 5, TimeUnit.MINUTES);
+        scheduledExecutorService.scheduleWithFixedDelay(this::refreshCachedMetadata, 5, 5, TimeUnit.MINUTES);
 
         // fetch metadata upon initialization and cache the metadata it needs later
         FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
@@ -83,7 +84,7 @@ public class FluxProducer<K, V> implements Producer {
             public void onFailure(Throwable t) {
                 Logger.error(t);
             }
-        }, Executors.newSingleThreadExecutor());
+        }, FluxExecutor.getExecutorService());
     }
 
     /**
@@ -139,11 +140,11 @@ public class FluxProducer<K, V> implements Producer {
     }
 
     private void flushBuffer() {
-        Logger.info("COMMENCING BUFFER FLUSH.");
-
         if (buffer.isEmpty()) {
             return;
         }
+
+        Logger.info("COMMENCING BUFFER FLUSH.");
 
         // Create deep copy/snapshot of the buffer so we can send it in our request and clear the actual buffer
         // This allows us to continue appending to the buffer w/o messing with the data inside the publish request
@@ -184,7 +185,7 @@ public class FluxProducer<K, V> implements Producer {
                 // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
                 Logger.error(t);
             }
-        }, Executors.newSingleThreadExecutor());
+        }, FluxExecutor.getExecutorService());
     }
 
     @Override

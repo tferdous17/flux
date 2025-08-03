@@ -4,7 +4,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class FluxExecutor {
-    private static final ExecutorService EXECUTOR_SERVICE = Executors.newFixedThreadPool(4);
+    private static final ExecutorService EXECUTOR_SERVICE = Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
 
     private FluxExecutor() {} // prevent initialization
 
