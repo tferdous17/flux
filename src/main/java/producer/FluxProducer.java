@@ -27,7 +27,6 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
-    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(2);
     private final Metadata metadata;
     private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
 
@@ -37,7 +36,9 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
         buffer = new ArrayList<>();
 
-        scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
 
         metadata = new Metadata(60);
         cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();

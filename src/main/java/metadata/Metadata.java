@@ -31,7 +31,6 @@ public class Metadata {
     private AtomicReference<BrokerMetadataSnapshot> currBrokerMetadataSnapshot; // Cached metadata snapshot
     private ManagedChannel channel;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
-    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(2);
     private List<MetadataListener> listeners = new ArrayList<>();
 
     public Metadata(int refreshIntervalSec) {
@@ -43,7 +42,9 @@ public class Metadata {
         currBrokerMetadataSnapshot = new AtomicReference<>(initialMetadataFetch()); // This is blocking
 
         System.out.println(currBrokerMetadataSnapshot);
-        scheduledExecutorService.scheduleWithFixedDelay(this::updateMetadata, refreshIntervalSec, refreshIntervalSec, TimeUnit.SECONDS);
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::updateMetadata, refreshIntervalSec, refreshIntervalSec, TimeUnit.SECONDS);
     }
 
     public Metadata() {
