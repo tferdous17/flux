@@ -19,7 +19,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.locks.StampedLock;
 
 public class FluxProducer<K, V> implements Producer {
-    private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
+    private final PublishToBrokerGrpc.PublishToBrokerFutureStub publishToBrokerFutureStub;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
@@ -30,12 +30,12 @@ public class FluxProducer<K, V> implements Producer {
 
     public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
-        blockingStub = PublishToBrokerGrpc.newBlockingStub(channel);
+        publishToBrokerFutureStub = PublishToBrokerGrpc.newFutureStub(channel);
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
         buffer = new ArrayList<>();
 
         scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
-        scheduledExecutorService.scheduleWithFixedDelay(this::refreshCachedMetadata, 5, 5, TimeUnit.MINUTES);
+        scheduledExecutorService.scheduleWithFixedDelay(this::refreshCachedMetadata, 1, 5, TimeUnit.MINUTES);
 
         // fetch metadata upon initialization and cache the metadata it needs later
         FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
@@ -145,6 +145,8 @@ public class FluxProducer<K, V> implements Producer {
             return;
         }
 
+        // Create deep copy/snapshot of the buffer so we can send it in our request and clear the actual buffer
+        // This allows us to continue appending to the buffer w/o messing with the data inside the publish request
         List<IntermediaryRecord> bufferSnapshot = new ArrayList<>(buffer);
         buffer.clear();
 
@@ -166,24 +168,23 @@ public class FluxProducer<K, V> implements Producer {
         System.out.println("SIZE OF REQ: " + request.getSerializedSize());
 
         // Send the request and receive the response (acknowledgement)
-        BrokerToPublisherAck response;
-        try {
-            Logger.info("SENDING OVER BATCH OF RECORDS.");
-            response = blockingStub.send(request);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return;
-        }
+        Logger.info("SENDING OVER BATCH OF RECORDS.");
+        ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
+        Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
+            @Override
+            public void onSuccess(BrokerToPublisherAck response) {
+                Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
+                        response.getAcknowledgement(),
+                        response.getStatus(),
+                        response.getRecordOffset());
+            }
 
-        if (response.getStatus().equals(Status.SUCCESS)) {
-            buffer.clear();
-        }
-
-        System.out.println("\n--------------------------------");
-        System.out.println(response.getAcknowledgement());
-        System.out.println("Status: " + response.getStatus());
-        System.out.println("Record Offset: " + response.getRecordOffset());
-        System.out.println("--------------------------------\n");
+            @Override
+            public void onFailure(Throwable t) {
+                // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
+                Logger.error(t);
+            }
+        }, Executors.newSingleThreadExecutor());
     }
 
     @Override
