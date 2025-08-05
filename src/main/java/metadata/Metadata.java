@@ -62,7 +62,7 @@ public class Metadata {
     public void removeListener(MetadataListener listener) {
         synchronized (listeners) {
             listeners.remove(listener);
-            Logger.info("LISTENER ADDED");
+            Logger.info("LISTENER REMOVED");
         }
     }
 
@@ -107,15 +107,20 @@ public class Metadata {
         Futures.addCallback(future, new FutureCallback<FetchBrokerMetadataResponse>() {
             @Override
             public void onSuccess(FetchBrokerMetadataResponse response) {
-                currBrokerMetadataSnapshot.set(new BrokerMetadataSnapshot(
+                BrokerMetadataSnapshot newSnapshot = new BrokerMetadataSnapshot(
                         response.getBrokerId(),
                         response.getHost(),
                         response.getPortNumber(),
                         response.getNumPartitions()
-                ));
-                updateCounter++;
-                notifyListeners();
-                Logger.info("SUCCESSFULLY REFRESHED CACHED BROKER METADATA, UPDATE COUNT = %d".formatted(updateCounter));
+                );
+                if (!newSnapshot.equals(currBrokerMetadataSnapshot.get())) {
+                    currBrokerMetadataSnapshot.set(newSnapshot);
+                    updateCounter++;
+                    notifyListeners();
+                    Logger.info("SUCCESSFULLY REFRESHED CACHED BROKER METADATA, UPDATE COUNT = %d".formatted(updateCounter));
+                } else {
+                    Logger.info("NO NEW CHANGES IN METADATA DETECTED");
+                }
             }
 
             @Override
@@ -126,5 +131,9 @@ public class Metadata {
         }, FluxExecutor.getExecutorService());
     }
 
+    public void close() {
+        channel.shutdown();
+        FluxExecutor.getSchedulerService().shutdown();
+    }
 
 }
