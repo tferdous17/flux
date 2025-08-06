@@ -123,7 +123,8 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
                         response.getAcknowledgement(),
                         response.getStatus(),
-                        response.getRecordOffset());
+                        response.getRecordOffset()
+                );
             }
 
             @Override

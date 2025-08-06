@@ -84,6 +84,7 @@ public class Broker {
         }
     }
 
+    // TODO: fix this | Noticed that we are not updating the partition field inside the serialized producer record--so when it gets deserialized, it returns its original partition, not the computed target partition.
     public int produceSingleMessage(int targetPartitionId, byte[] record) throws IOException {
         // Note: Partition IDs are NOT 0-indexed
         Partition targetPartition = partitions.get(targetPartitionId - 1);
@@ -132,7 +133,8 @@ public class Broker {
     // TODO: Finish consumer infrastructure
     public Message consumeMessage(int startingOffset) throws IOException {
         // Default to partition 0 for backward compatibility
-        return consumeMessage(0, startingOffset);
+        // TODO: Replace placeholder partitionID
+        return consumeMessage(1, startingOffset);
     }
 
     /**
