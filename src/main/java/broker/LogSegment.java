@@ -236,6 +236,9 @@ public class LogSegment {
         Logger.info("Byte Offset and Record Len: " + Arrays.toString(byteOffsetAndRecordLen));
         byte[] data = new byte[byteOffsetAndRecordLen[1]];
 
+        // TODO: Fix - At some point in testing (ConsumerServiceTest) this threw a `java.lang.IllegalArgumentException: newPosition > limit: (94 > 0)`
+        // Might be because of an empty buffer or mismatch of values. Maybe byte offset didn't get reset properly when the buffer was flushed?
+        // Error does not occur on every run of the test.
         buffer.position(byteOffsetAndRecordLen[0]);
         // issue is here
         buffer.get(data, 0, byteOffsetAndRecordLen[1]);
