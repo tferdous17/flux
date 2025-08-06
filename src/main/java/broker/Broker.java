@@ -1,7 +1,6 @@
 package broker;
 
 import commons.FluxTopic;
-import metadata.InMemoryBrokerMetadataRepository;
 import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
@@ -66,8 +65,6 @@ public class Broker {
 
         FluxTopic topic = new FluxTopic(topicName, topicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
-        // TODO: Replace when metadata api is implemented
-        InMemoryBrokerMetadataRepository.getInstance().addBroker(this.getBrokerId(), this);
         Logger.info("BROKER: Create topics completed successfully.");
     }
 
@@ -135,7 +132,8 @@ public class Broker {
     // TODO: Finish consumer infrastructure
     public Message consumeMessage(int startingOffset) throws IOException {
         // Default to partition 0 for backward compatibility
-        return consumeMessage(0, startingOffset);
+        // TODO: Replace placeholder partitionID
+        return consumeMessage(1, startingOffset);
     }
 
     /**
