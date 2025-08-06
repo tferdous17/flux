@@ -2,10 +2,7 @@ package grpc.services;
 
 import broker.Broker;
 import io.grpc.stub.StreamObserver;
-import proto.CreateTopicsRequest;
-import proto.CreateTopicsResult;
-import proto.CreateTopicsServiceGrpc;
-import proto.Status;
+import proto.*;
 
 import java.io.IOException;
 
@@ -26,10 +23,10 @@ public class CreateTopicsServiceImpl extends CreateTopicsServiceGrpc.CreateTopic
             throw new RuntimeException(e);
         }
 
-        resultBuilder.setAcknowledgement("topic creation request received");
+        resultBuilder.setAcknowledgement("Topic Creation request received");
         resultBuilder.setStatus(Status.SUCCESS);
-        resultBuilder.setTotalNumPartitionsCreated(1);
-        resultBuilder.addTopicNames("all topic names");
+        resultBuilder.addTopicNames(req.getTopicsList().stream().map(Topic::getTopicName).toString());
+        resultBuilder.setTotalNumPartitionsCreated(req.getTopicsCount());
 
         responseObserver.onNext(resultBuilder.build()); // this just sends the response back to the client
         responseObserver.onCompleted(); // lets the client know there are no more messages after this
