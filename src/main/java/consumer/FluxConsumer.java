@@ -11,6 +11,7 @@ import proto.*;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.*;
 
@@ -25,8 +26,8 @@ public class FluxConsumer<K, V> implements Consumer {
     }
 
     @Override
-    public void subscribe(String partitionID) {
-        //  Create a gRPC request to sub to a partitionID/ list of topics
+    public void subscribe(Collection<String> topics) {
+        //  Create a gRPC request to sub to a list of topics
         /*
             SubscribeRequest request = SubscribeRequest.newBuilder()
             .setPartitionId(partitionId)
@@ -38,13 +39,11 @@ public class FluxConsumer<K, V> implements Consumer {
         // SubscribeResponse response = brokerStub.subscribe(request);
 
         // Logger messages
-        Logger.info("Subbed to partition" + partitionID);
-        Logger.warn("Failed to sub to partition" + partitionID);
     }
 
     @Override
-    public void unsubscribe(String partitionID) {
-        // Create a gRPC request to unsubscribe from the partition
+    public void unsubscribe() {
+        // Create a gRPC request to unsubscribe from all topics
         /*
         UnsubscribeRequest request = UnsubscribeRequest.newBuilder()
                 .setPartitionId(partitionId)
@@ -56,8 +55,6 @@ public class FluxConsumer<K, V> implements Consumer {
 //        UnsubscribeResponse response = brokerStub.unsubscribe(request);
 
         // Logger messages
-        Logger.info("Unsubscribed to partition" + partitionID);
-        Logger.warn("Failed to unsubscribed to partition" + partitionID);
     }
 
     @Override
@@ -107,7 +104,7 @@ public class FluxConsumer<K, V> implements Consumer {
     }
 
     @Override
-    public void commit(String partitionID,  long offset) {
+    public void commitOffsets() {
         // Create a gRPC request to commit to offset
         /*
         CommitRequest request = CommitRequest.newBuilder()
@@ -121,7 +118,5 @@ public class FluxConsumer<K, V> implements Consumer {
 //        CommitResponse response = brokerStub.commit(request);
 
         // Logger messages
-        Logger.info("Committed offset " + offset + " for partition: " + partitionID);
-        Logger.warn("Failed to commit offset for partition: " + partitionID);
     }
 }
