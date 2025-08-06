@@ -1,36 +1,48 @@
 package producer;
 
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
+import commons.FluxExecutor;
 import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import metadata.InMemoryBrokerMetadataRepository;
+import metadata.BrokerMetadataSnapshot;
 import metadata.InMemoryTopicMetadataRepository;
+import metadata.Metadata;
+import metadata.MetadataListener;
 import org.tinylog.Logger;
-import proto.BrokerToPublisherAck;
-import proto.PublishDataToBrokerRequest;
-import proto.PublishToBrokerGrpc;
-import proto.Status;
+import proto.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 
-public class FluxProducer<K, V> implements Producer {
-    private final PublishToBrokerGrpc.PublishToBrokerBlockingStub blockingStub;
+public class FluxProducer<K, V> implements Producer, MetadataListener {
+    private final PublishToBrokerGrpc.PublishToBrokerFutureStub publishToBrokerFutureStub;
+    private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
-    private final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(1);
+    private final Metadata metadata;
+    private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
 
     public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
-        blockingStub = PublishToBrokerGrpc.newBlockingStub(channel);
+        publishToBrokerFutureStub = PublishToBrokerGrpc.newFutureStub(channel);
+        metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
         buffer = new ArrayList<>();
-        scheduledExecutorService.scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
+
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
+
+        metadata = new Metadata(60);
+        cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
+        metadata.addListener(this);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -41,22 +53,24 @@ public class FluxProducer<K, V> implements Producer {
         this(60, 60);
     }
 
+    public void printMetadataForTesting() {
+        System.out.println(cachedBrokerMetadata);
+    }
+
     @Override
     public void send(ProducerRecord record) throws IOException {
-        // need to maintain a buffer of serialized records
-        // then once it reaches a particular threshold, flush it by adding all the recs to a grpc req
-        // and then sending it over to the broker
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
+        int currentNumBrokerPartitions = cachedBrokerMetadata.get().getNumPartitions();
+
         // Determine target partition, and then serialize.
-        // TODO: using a repository class to accomplish this but replace w/ proper API in the future
         int targetPartition = PartitionSelector.getPartitionNumberForRecord(
                 InMemoryTopicMetadataRepository.getInstance(),
                 record.getPartitionNumber(),
                 key.toString(),
                 record.getTopic(),
-                InMemoryBrokerMetadataRepository.getInstance().getNumberOfPartitionsById("BROKER-1") // must use this exact ID for testing
+                currentNumBrokerPartitions
         );
         System.out.println("Record has target partition = " + targetPartition);
         // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
@@ -72,12 +86,14 @@ public class FluxProducer<K, V> implements Producer {
     }
 
     private void flushBuffer() {
-        Logger.info("COMMENCING BUFFER FLUSH.");
-
         if (buffer.isEmpty()) {
             return;
         }
 
+        Logger.info("COMMENCING BUFFER FLUSH.");
+
+        // Create deep copy/snapshot of the buffer so we can send it in our request and clear the actual buffer
+        // This allows us to continue appending to the buffer w/o messing with the data inside the publish request
         List<IntermediaryRecord> bufferSnapshot = new ArrayList<>(buffer);
         buffer.clear();
 
@@ -99,29 +115,37 @@ public class FluxProducer<K, V> implements Producer {
         System.out.println("SIZE OF REQ: " + request.getSerializedSize());
 
         // Send the request and receive the response (acknowledgement)
-        BrokerToPublisherAck response;
-        try {
-            Logger.info("SENDING OVER BATCH OF RECORDS.");
-            response = blockingStub.send(request);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return;
-        }
+        Logger.info("SENDING OVER BATCH OF RECORDS.");
+        ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
+        Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
+            @Override
+            public void onSuccess(BrokerToPublisherAck response) {
+                Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
+                        response.getAcknowledgement(),
+                        response.getStatus(),
+                        response.getRecordOffset()
+                );
+            }
 
-        if (response.getStatus().equals(Status.SUCCESS)) {
-            buffer.clear();
-        }
-
-        System.out.println("\n--------------------------------");
-        System.out.println(response.getAcknowledgement());
-        System.out.println("Status: " + response.getStatus());
-        System.out.println("Record Offset: " + response.getRecordOffset());
-        System.out.println("--------------------------------\n");
+            @Override
+            public void onFailure(Throwable t) {
+                // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
+                Logger.error(t);
+            }
+        }, FluxExecutor.getExecutorService());
     }
 
     @Override
     public void close() {
         flushBuffer();
         channel.shutdownNow();
+    }
+
+    @Override
+    public void onUpdate(AtomicReference<BrokerMetadataSnapshot> newSnapshot) {
+        // Using an AtomicReference allows us to take advantage of hardware-level instructions, such as compare_and_swap,
+        // to ensure thread safety on our metadata cache while avoiding the use of locks
+        // (because locking can incur overhead and dampen performance a bit in multithreaded environments)
+        cachedBrokerMetadata.set(newSnapshot.get());
     }
 }
