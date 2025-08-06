@@ -8,7 +8,6 @@ import java.io.IOException;
 
 public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImplBase {
     Broker broker;
-    int nextOffset; // to read
 
     public ConsumerServiceImpl(Broker broker) {
         this.broker = broker;
@@ -17,7 +16,7 @@ public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImpl
     @Override
     public void fetchMessage(FetchMessageRequest req, StreamObserver<FetchMessageResponse> responseObserver) {
         FetchMessageResponse.Builder responseBuilder = FetchMessageResponse.newBuilder();
-        nextOffset = req.getStartingOffset() + 1;
+        int nextOffset = req.getStartingOffset() + 1;
         try {
             Message msg = this.broker.consumeMessage(req.getPartitionId(), req.getStartingOffset());
             if (msg != null) {
@@ -25,7 +24,6 @@ public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImpl
                         .setMessage(msg)
                         .setStatus(Status.SUCCESS)
                         .setNextOffset(nextOffset);
-                nextOffset++;
             } else {
                 // no more messages to read OR data not yet flushed to disk
                 responseBuilder
