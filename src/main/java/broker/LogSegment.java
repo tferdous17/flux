@@ -319,7 +319,7 @@ public class LogSegment {
             Message msg = Message
                     .newBuilder()
                     .setTopic(rec.getTopic())
-                    .setPartition(rec.getPartitionNumber() == null ? 1 : rec.getPartitionNumber())
+                    .setPartition(rec.getPartitionNumber() == null ? 1 : partitionNumber)
                     .setOffset(recordOffset)
                     .setTimestamp(rec.getTimestamp())
                     .setKey(rec.getKey() == null ? "" : rec.getKey())
