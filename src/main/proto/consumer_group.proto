@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+import "common.proto";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service ConsumerGroupService {
+  rpc JoinGroup(JoinGroupRequest) returns (JoinGroupResponse);
+  rpc SyncGroup(SyncGroupRequest) returns (SyncGroupResponse);
+  rpc HeartBeat(HeartBeatRequest) returns (HeartBeatResponse);
+  rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
+}
+
+
+message JoinGroupRequest {};
+message JoinGroupResponse {};
+
+message SyncGroupRequest {};
+message SyncGroupResponse {};
+
+message HeartBeatRequest {};
+message HeartBeatResponse {};
+
+message LeaveGroupRequest {};
+message LeaveGroupResponse {};
