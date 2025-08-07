@@ -14,12 +14,12 @@ message PublishDataToBrokerRequest {
 }
 
 message Record {
-  int32 targetPartition = 1;
+  int32 target_partition = 1;
   bytes data = 2;
 }
 
 message BrokerToPublisherAck {
   string acknowledgement = 1;
   Status status = 2;
-  int32 recordOffset = 3;
+  int32 record_offset = 3;
 }

@@ -12,8 +12,8 @@ service MetadataService {
 message FetchBrokerMetadataRequest {}
 
 message FetchBrokerMetadataResponse {
-  string brokerId = 1;
+  string broker_id = 1;
   string host = 2;
-  uint32 portNumber = 3;
-  uint32 numPartitions = 4;
+  uint32 port_number = 3;
+  uint32 num_partitions = 4;
 }
