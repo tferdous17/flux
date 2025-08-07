@@ -8,19 +8,61 @@ option java_multiple_files = true;
 service ConsumerGroupService {
   rpc JoinGroup(JoinGroupRequest) returns (JoinGroupResponse);
   rpc SyncGroup(SyncGroupRequest) returns (SyncGroupResponse);
-  rpc HeartBeat(HeartBeatRequest) returns (HeartBeatResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
 }
 
+message MemberMetadata {
+  string member_id = 1;
+  repeated string topics = 2;
+  bytes userData = 3;
+}
 
-message JoinGroupRequest {};
-message JoinGroupResponse {};
+message MemberAssignment {
+  string member_id = 1;
+  bytes assignment = 2;
+}
 
-message SyncGroupRequest {};
-message SyncGroupResponse {};
+message JoinGroupRequest {
+  string group_id = 1;
+  string member_id = 2;
+  int32 session_timeout_ms = 3;
+  int32 rebalance_timeout_ms = 4;
+  repeated string protocols = 5; // [RANGE, ROUND_ROBIN]
+};
+message JoinGroupResponse {
+  Status status = 1;
+  string group_id = 2;
+  int32 generation_id = 3;
+  string leader_id = 4;
+  string member_id = 5;
+  repeated MemberMetadata members = 6;
+};
 
-message HeartBeatRequest {};
-message HeartBeatResponse {};
+message SyncGroupRequest {
+  string group_id = 1;
+  int32 generation_id = 2;
+  string member_id = 3;
+  repeated MemberAssignment assignments = 4; // ONLY leader wil fill assignments.
+};
+message SyncGroupResponse {
+  Status status = 1;
+  bytes assignment = 2; // For each follower => its own assignment
+};
 
-message LeaveGroupRequest {};
-message LeaveGroupResponse {};
+message HeartbeatRequest {
+  string group_id = 1;
+  string member_id = 2;
+  int32 generation_id = 3;
+};
+message HeartbeatResponse {
+  Status status = 1;
+};
+
+message LeaveGroupRequest {
+  string group_id = 1;
+  string member_id = 2;
+};
+message LeaveGroupResponse {
+  Status status = 1;
+};
