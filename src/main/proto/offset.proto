@@ -1,0 +1,10 @@
+service OffsetService {
+  rpc CommitOffsets(OffsetCommitRequest) returns (OffsetCommitResponse);
+  rpc FetchOffsets(FetchOffsetsRequest) returns (FetchOffsetsResponse);
+}
+
+message OffsetCommitRequest {};
+message OffsetCommitResponse {};
+
+message FetchOffsetsRequest {};
+message FetchOffsetsResponse {};
