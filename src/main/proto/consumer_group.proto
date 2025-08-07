@@ -5,64 +5,90 @@ import "common.proto";
 option java_package = "proto";
 option java_multiple_files = true;
 
-service ConsumerGroupService {
+service GroupCoordinatorService {
   rpc JoinGroup(JoinGroupRequest) returns (JoinGroupResponse);
   rpc SyncGroup(SyncGroupRequest) returns (SyncGroupResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
 }
 
-message MemberMetadata {
-  string member_id = 1;
-  repeated string topics = 2;
-  bytes userData = 3;
+enum GroupStatus {
+  GROUP_OK = 0;
+
+  // Membership states
+  NOT_GROUP_LEADER = 1;
+  MEMBER_NOT_FOUND = 2;
+  MEMBER_ID_REQUIRED = 3;
+  STALE_MEMBER_GENERATION = 4;
+
+  // Group states
+  GROUP_REBALANCING = 5;
+  GROUP_LOADING = 6;
+  GROUP_NOT_FOUND = 7;
+  GROUP_COORDINATOR_CHANGED = 8;
+
+  // Protocol errors
+  INCOMPATIBLE_PROTOCOL = 9;
+  INVALID_SESSION_TIMEOUT = 10;
+
+  // Authorization
+  GROUP_AUTH_FAILED = 11;
 }
 
-message MemberAssignment {
+message ProtocolMetadata {
+  string name = 1; //[ "range", "roundrobin"]
+  bytes metadata = 2;
+}
+
+message MemberInfo {
   string member_id = 1;
-  bytes assignment = 2;
+  bytes metadata = 2;
+}
+
+message Assignment {
+  bytes assignment = 1;
 }
 
 message JoinGroupRequest {
   string group_id = 1;
   string member_id = 2;
   int32 session_timeout_ms = 3;
-  int32 rebalance_timeout_ms = 4;
-  repeated string protocols = 5; // [RANGE, ROUND_ROBIN]
-};
+  int32 rebalance_timeout_ms = 4; // Max time for all joins
+  repeated ProtocolMetadata protocols = 5;
+}
 message JoinGroupResponse {
-  Status status = 1;
-  string group_id = 2;
+  GroupStatus status = 1;
+  string member_id = 2;
   int32 generation_id = 3;
   string leader_id = 4;
-  string member_id = 5;
-  repeated MemberMetadata members = 6;
-};
+  string protocol = 5;
+  repeated MemberInfo members = 6; // Only sent to leader
+}
 
 message SyncGroupRequest {
   string group_id = 1;
   int32 generation_id = 2;
   string member_id = 3;
-  repeated MemberAssignment assignments = 4; // ONLY leader wil fill assignments.
-};
+  Assignment assignment = 4;  // Leader sends group assignments
+}
 message SyncGroupResponse {
-  Status status = 1;
-  bytes assignment = 2; // For each follower => its own assignment
-};
+  GroupStatus status = 1;
+  Assignment assignment = 2;  // Member-specific assignment
+}
 
 message HeartbeatRequest {
   string group_id = 1;
   string member_id = 2;
   int32 generation_id = 3;
-};
+}
 message HeartbeatResponse {
-  Status status = 1;
-};
+  GroupStatus status = 1;
+}
 
 message LeaveGroupRequest {
   string group_id = 1;
   string member_id = 2;
-};
+}
 message LeaveGroupResponse {
-  Status status = 1;
-};
+  GroupStatus status = 1;
+}
