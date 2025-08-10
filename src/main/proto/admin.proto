@@ -14,14 +14,14 @@ message CreateTopicsRequest {
 }
 
 message Topic {
-  string topicName = 1;
-  uint32 numPartitions = 2;
-  uint32 replicationFactor = 3;
+  string topic_name = 1;
+  uint32 num_partitions = 2;
+  uint32 replication_factor = 3;
 }
 
 message CreateTopicsResult {
   string acknowledgement = 1;
   Status status = 2;
-  repeated string topicNames = 3;
-  uint32 totalNumPartitionsCreated = 4;
+  repeated string topic_names = 3;
+  uint32 total_num_partitions_created = 4;
 }
