@@ -52,7 +52,7 @@ message Assignment {
 message JoinGroupRequest {
   string group_id = 1;
   string member_id = 2;
-  int32 session_timeout_ms = 3;
+  int32 session_timeout_ms = 3; // heartbeat check
   int32 rebalance_timeout_ms = 4; // Max time for all joins
   repeated ProtocolMetadata protocols = 5;
 }
