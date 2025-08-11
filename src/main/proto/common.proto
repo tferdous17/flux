@@ -10,3 +10,8 @@ enum Status {
   FAILURE = 3; // if u want to just be general
   READ_COMPLETION = 4;
 }
+
+// Shared timestamp type
+message Timestamp {
+  int64 milliseconds = 1;
+}

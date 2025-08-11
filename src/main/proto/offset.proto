@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+import "common.proto";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service OffsetService {
+  rpc CommitOffsets(OffsetCommitRequest) returns (OffsetCommitResponse);
+  rpc FetchOffsets(FetchOffsetsRequest) returns (FetchOffsetsResponse);
+}
+
+enum OffsetStatus {
+  OFFSET_OK = 0;
+  OFFSET_COMMIT_DISABLED = 1;
+  OFFSET_LOAD_FAILED = 2;
+  OFFSET_NOT_FOUND = 3;
+  OFFSET_STALE = 4; // TOO OLD!
+  OFFSET_INVALID = 5; // negative offsets
+  OFFSET_AUTH_FAILED = 6;
+}
+
+message TopicPartition {
+  string topic = 1;
+  int32 partition = 2;
+}
+
+message OffsetCommit {
+  TopicPartition topic_partition = 1;
+  int64 offset = 2;
+  bytes metadata = 3;
+  int64 commit_timestamp = 4;  // Client-side timestamp
+}
+
+message OffsetCommitRequest {
+  string group_id = 1;
+  int32 generation_id = 2;
+  string member_id = 3;
+  int64 retention_time_ms = 4;
+  repeated OffsetCommit commits = 5;
+}
+
+message OffsetCommitResponse {
+  OffsetStatus status = 1;
+  map<string, OffsetStatus> partition_errors = 2;  // Key: "topic:partition"
+}
+
+message OffsetFetch {
+  TopicPartition topic_partition = 1;
+  int64 offset = 2;
+  bytes metadata = 3;
+  int64 commit_timestamp = 4;
+  int64 expire_timestamp = 5;  // When this offset will expire
+}
+
+message FetchOffsetsRequest {
+  string group_id = 1;
+  repeated TopicPartition partitions = 2;
+  bool require_stable = 3;
+}
+
+message FetchOffsetsResponse {
+  OffsetStatus status = 1;
+  repeated OffsetFetch offsets = 2;
+  map<string, OffsetStatus> partition_errors = 3;
+}
