@@ -1,4 +1,4 @@
-package broker;
+package server.internal.storage;
 
 import org.tinylog.Logger;
 import producer.RecordBatch;

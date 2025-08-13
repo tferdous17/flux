@@ -1,6 +1,6 @@
 package grpc.services;
 
-import broker.Broker;
+import server.internal.Broker;
 import io.grpc.stub.StreamObserver;
 import proto.*;
 

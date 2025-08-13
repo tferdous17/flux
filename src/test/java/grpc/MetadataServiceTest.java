@@ -1,6 +1,6 @@
 package grpc;
 
-import broker.Broker;
+import server.internal.Broker;
 import org.junit.jupiter.api.Test;
 import producer.FluxProducer;
 

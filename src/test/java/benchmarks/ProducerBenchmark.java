@@ -1,6 +1,6 @@
 package benchmarks;
 
-import broker.Broker;
+import server.internal.Broker;
 import grpc.BrokerServer;
 import org.openjdk.jmh.annotations.*;
 import producer.FluxProducer;
