@@ -1,6 +1,8 @@
 package broker;
 
 import org.junit.jupiter.api.Test;
+import server.internal.storage.Log;
+import server.internal.storage.LogSegment;
 
 import java.io.IOException;
 import java.util.List;

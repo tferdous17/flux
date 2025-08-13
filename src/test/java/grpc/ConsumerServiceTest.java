@@ -1,6 +1,6 @@
 package grpc;
 
-import broker.Broker;
+import server.internal.Broker;
 import consumer.ConsumerRecord;
 import consumer.FluxConsumer;
 import consumer.PollResult;
@@ -10,7 +10,6 @@ import producer.ProducerRecord;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.List;
 
 public class ConsumerServiceTest {
     @Test

@@ -1,4 +1,4 @@
-package broker;
+package server.internal;
 
 import commons.FluxTopic;
 import metadata.InMemoryTopicMetadataRepository;
@@ -6,6 +6,7 @@ import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
 import proto.Message;
+import server.internal.storage.Partition;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;

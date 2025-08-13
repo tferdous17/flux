@@ -1,6 +1,6 @@
 package grpc;
 
-import broker.Broker;
+import server.internal.Broker;
 import grpc.services.ConsumerServiceImpl;
 import grpc.services.CreateTopicsServiceImpl;
 import grpc.services.MetadataServiceImpl;
