@@ -20,6 +20,7 @@ public class Broker {
     private List<Partition> partitions;
     private int partitionIdCounter = 1;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
+    private final PartitionWriteManager writeManager;
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
@@ -29,6 +30,7 @@ public class Broker {
         this.port = port;
         this.numPartitions = numPartitions;
         this.partitions = new ArrayList<>();
+        this.writeManager = new PartitionWriteManager();
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
@@ -47,7 +49,8 @@ public class Broker {
 
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
         // right now just worry about creating 1 topic
-        proto.Topic firstTopic = topics.stream().findFirst().orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
+        proto.Topic firstTopic = topics.stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
         String topicName = firstTopic.getTopicName();
         int numPartitionsToCreate = firstTopic.getNumPartitions();
         int replicationFactor = firstTopic.getReplicationFactor();
@@ -68,7 +71,6 @@ public class Broker {
         Logger.info("BROKER: Create topics completed successfully.");
     }
 
-
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
         if (topicName == null || topicName.isEmpty()) {
             throw new IllegalArgumentException("Cannot create topic with empty name.");
@@ -77,38 +79,33 @@ public class Broker {
             throw new IllegalArgumentException("Topic already exists: %s".formatted(topicName));
         }
         if (numPartitions < 1) {
-            throw new IllegalArgumentException("Number of partitions can not be less than 1: %d".formatted(numPartitions));
+            throw new IllegalArgumentException(
+                    "Number of partitions can not be less than 1: %d".formatted(numPartitions));
         }
         if (replicationFactor < 0 || replicationFactor > MAX_REPLICATION_FACTOR) {
-            throw new IllegalArgumentException("Replication factor can not be negative or >%d: %d".formatted(MAX_REPLICATION_FACTOR, replicationFactor));
+            throw new IllegalArgumentException("Replication factor can not be negative or >%d: %d"
+                    .formatted(MAX_REPLICATION_FACTOR, replicationFactor));
         }
     }
 
     public int produceSingleMessage(int targetPartitionId, byte[] record) throws IOException {
         // Note: Partition IDs are NOT 0-indexed
         Partition targetPartition = partitions.get(targetPartitionId - 1);
-        int currRecordOffset = targetPartition.getNextOffset();
 
-        // Update record offset in header (first 4 bytes)
-        ByteBuffer buffer = ByteBuffer.wrap(record);
-        buffer.putInt(0, currRecordOffset);
-
-        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition %d | DATA = %s".formatted(targetPartitionId, Arrays.toString(buffer.array())));
-
-        targetPartition.appendSingleRecord(record, currRecordOffset);
-        Logger.info("1. Appended record to broker partition %d".formatted(targetPartitionId));
-
-        return currRecordOffset;
+        // Use the write manager for thread-safe write operation
+        return writeManager.writeToPartition(targetPartition, record);
     }
 
-    // ! Not currently using this below method, general functionality already handled by the other produceMessages()
+    // ! Not currently using this below method, general functionality already
+    // handled by the other produceMessages()
     public void produceMessages(RecordBatch batch) throws IOException {
         // For batches, use round-robin distribution since we can't easily extract keys
         // from the batch without decomposing it
         int targetPartitionId = roundRobinCounter.getAndIncrement() % numPartitions;
         Partition targetPartition = partitions.get(targetPartitionId);
 
-        targetPartition.appendRecordBatch(batch);
+        // Use the write manager for thread-safe batch write operation
+        writeManager.writeRecordBatchToPartition(targetPartition, batch);
         Logger.info("Appended record batch to broker partition %d".formatted(targetPartitionId));
     }
 
@@ -123,7 +120,8 @@ public class Broker {
         Logger.info("Appended %d records to broker.".formatted(counter));
         System.out.println("PRINTING # OF RECORDS PER PARTITION:");
         for (Partition partition : partitions) {
-            System.out.println("Partition " + partition.getPartitionId() + " contains: " + partition.getCurrentOffset() + " records");
+            System.out.println("Partition " + partition.getPartitionId() + " contains: " + partition.getCurrentOffset()
+                    + " records");
         }
 
         return lastRecordOffset;
@@ -140,11 +138,12 @@ public class Broker {
      * Consume a message from a specific partition at the given offset
      */
     public Message consumeMessage(int partitionId, int startingOffset) throws IOException {
-        if (partitionId < 1 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions - 1));
+        if (partitionId < 1 || partitionId > numPartitions) {
+            throw new IllegalArgumentException(
+                    "Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions));
         }
 
-        Partition targetPartition = partitions.get(partitionId);
+        Partition targetPartition = partitions.get(partitionId - 1);
         return targetPartition.getRecordAtOffset(startingOffset);
     }
 
@@ -168,10 +167,11 @@ public class Broker {
      * Get a specific partition by ID
      */
     public Partition getPartition(int partitionId) {
-        if (partitionId < 1 || partitionId >= numPartitions) {
-            throw new IllegalArgumentException("Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions - 1));
+        if (partitionId < 1 || partitionId > numPartitions) {
+            throw new IllegalArgumentException(
+                    "Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions));
         }
-        return partitions.get(partitionId);
+        return partitions.get(partitionId - 1);
     }
 
     /**
