@@ -95,10 +95,10 @@ public class Broker {
         ByteBuffer buffer = ByteBuffer.wrap(record);
         buffer.putInt(0, currRecordOffset);
 
-        Logger.info("PRODUCE SINGLE MESSAGE: Routing to partition %d | DATA = %s".formatted(targetPartitionId, Arrays.toString(buffer.array())));
+        Logger.info("PRODUCE SINGLE MESSAGE: Routing to broker=%s partition=%d | DATA = %s".formatted(brokerId, targetPartitionId, Arrays.toString(buffer.array())));
 
         targetPartition.appendSingleRecord(record, currRecordOffset);
-        Logger.info("1. Appended record to broker partition %d".formatted(targetPartitionId));
+        Logger.info("1. Appended record to broker=%s partition=%d".formatted(brokerId, targetPartitionId));
 
         return currRecordOffset;
     }
