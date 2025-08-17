@@ -38,7 +38,7 @@ public class Broker {
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
-        this(brokerId, host, port, 3); // Default to 3 partitions
+        this(brokerId, host, port, 1); // Default to 3 partitions
     }
 
     public Broker() throws IOException {
