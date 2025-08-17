@@ -62,16 +62,16 @@ public class LogSegment {
         }
     }
 
-    public LogSegment(int partitionNumber, int startOffset) throws IOException {
+    public LogSegment(String topic, int partitionNumber, int startOffset) throws IOException {
         this.partitionNumber = partitionNumber;
         this.startOffset = startOffset;
 
         try {
             createDataFolder();
 
-            // ex: partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
-            String logFileName = String.format("data/partition%d_%05d.log", this.partitionNumber, this.startOffset);
-            String indexFileName = String.format("data/partition%d_%05d.index", this.partitionNumber, this.startOffset);
+            // ex: my-topic_partition1_000000.log, actual kafka names log files purely by byte offset like 000000123401.log
+            String logFileName = String.format("data/%s_partition%d_%05d.log", topic, this.partitionNumber, this.startOffset);
+            String indexFileName = String.format("data/%s_partition%d_%05d.index", topic, this.partitionNumber, this.startOffset);
 
             this.logFile = createFile(logFileName);
             this.indexFile = createFile(indexFileName);
@@ -88,8 +88,8 @@ public class LogSegment {
     }
 
     // overloaded constructor in case we want to manually define threshold
-    public LogSegment(int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
-        this(partitionNumber, startOffset);
+    public LogSegment(String topic, int partitionNumber, int startOffset, int segmentThresholdInBytes) throws IOException {
+        this(topic, partitionNumber, startOffset);
         this.segmentThresholdInBytes = segmentThresholdInBytes;
     }
 

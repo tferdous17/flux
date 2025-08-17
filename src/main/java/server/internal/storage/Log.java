@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Log, by extension, is essentially a manager for all these segments.
  */
 public class Log {
+    private String topic;
     private int partitionId; // id of which partition it belongs to
     private List<LogSegment> segments;
     private LogSegment activeSegment;
@@ -25,10 +26,11 @@ public class Log {
     private int logEndOffset;
 
     // By default, creating a Log will also instantiate 1 empty and mutable LogSegment (default record offset: 0)
-    public Log(int partitionId) throws IOException {
+    public Log(String topic, int partitionId) throws IOException {
+        this.topic = topic;
         this.partitionId = partitionId;
 
-        LogSegment segment = new LogSegment(partitionId, 0);
+        LogSegment segment = new LogSegment(topic, partitionId, 0);
         this.segments = new ArrayList<>();
         this.segments.add(segment);
         this.activeSegment = segment;
@@ -61,7 +63,7 @@ public class Log {
     }
 
     private LogSegment createNewSegment(int partitionId) throws IOException {
-        LogSegment newSegment = new LogSegment(partitionId, currentOffset.get());
+        LogSegment newSegment = new LogSegment(this.topic, partitionId, currentOffset.get());
         segments.add(newSegment);
         activeSegment = newSegment;
         System.out.println("CURRENT OFFSET IS: " + currentOffset.get());

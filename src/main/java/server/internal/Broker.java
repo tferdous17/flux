@@ -2,6 +2,7 @@ package server.internal;
 
 import commons.FluxTopic;
 import metadata.InMemoryTopicMetadataRepository;
+import metadata.Metadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
@@ -33,7 +34,7 @@ public class Broker {
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            this.partitions.add(new Partition(partitionIdCounter++));
+            this.partitions.add(new Partition("default-topic", partitionIdCounter++));
         }
     }
 
@@ -43,7 +44,7 @@ public class Broker {
 
     public Broker() throws IOException {
         // Default to 1 partition since all records technically require a topic field.
-        this("BROKER-1", "localhost", 50051, 1);
+        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, 1);
     }
 
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
@@ -58,7 +59,7 @@ public class Broker {
 
         List<Partition> topicPartitions = new ArrayList<>();
         for (int i = 0; i < numPartitionsToCreate; i++) {
-            Partition p = new Partition(partitionIdCounter++);
+            Partition p = new Partition(topicName, partitionIdCounter++);
             this.partitions.add(p);
             topicPartitions.add(p);
             this.numPartitions++;
