@@ -15,10 +15,13 @@ import producer.FluxProducer;
 import producer.ProducerRecord;
 import org.junit.jupiter.api.*;
 import org.tinylog.Logger;
+import server.internal.Broker;
+import server.internal.storage.Partition;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -88,7 +91,7 @@ public class FluxParallelProducerJUnitTest {
         
         // Create producers
         for (int i = 0; i < numProducers; i++) {
-            FluxProducer<String, String> producer = new FluxProducer<>(1, 2);
+            FluxProducer<String, String> producer = new FluxProducer<>(new Properties(), 1, 2);
             producers.add(producer);
         }
         
