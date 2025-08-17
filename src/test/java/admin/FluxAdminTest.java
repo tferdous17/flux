@@ -1,14 +1,32 @@
 package admin;
 
-import commons.header.Properties;
 import org.junit.jupiter.api.Test;
+import producer.FluxProducer;
+import producer.ProducerRecord;
 
 import java.util.List;
+import java.util.Properties;
 
 public class FluxAdminTest {
 
     @Test
-    public void createAdminClientTest() {
-        Admin admin = FluxAdmin.create(List.of("localhost:50051"));
+    public void createBootstrapClusterTest() {
+        Properties props = new Properties();
+        props.setProperty("bootstrap.servers", "localhost:50051,localhost:50052,localhost:50053");
+        Admin admin = FluxAdminClient.create(props);
+
+        NewTopic topic = new NewTopic("test-topic", 3, 1);
+        admin.createTopics(List.of(topic));
+
+        FluxProducer<String, String> producer = new FluxProducer<>(15, 60);
+        while (true) {
+            ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", 2, "test-key", "test-value");
+            try {
+                producer.send(record);
+                Thread.sleep(1000);
+            } catch (Exception e){
+                e.printStackTrace();
+            }
+        }
     }
 }
