@@ -7,6 +7,7 @@ import producer.FluxProducer;
 import producer.ProducerRecord;
 
 import java.io.IOException;
+import java.util.Properties;
 
 public class ProducerToBrokerGrpcTest {
 
@@ -57,7 +58,7 @@ public class ProducerToBrokerGrpcTest {
 
     // Make sure to manually close when done with testing this
     private static void startClient() {
-        FluxProducer<String, String> producer = new FluxProducer<>(15, 60);
+        FluxProducer<String, String> producer = new FluxProducer<>(new Properties(), 15, 60);
         while (true) {
             String t = randStringGen();
 

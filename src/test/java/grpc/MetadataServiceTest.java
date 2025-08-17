@@ -4,6 +4,8 @@ import server.internal.Broker;
 import org.junit.jupiter.api.Test;
 import producer.FluxProducer;
 
+import java.util.Properties;
+
 public class MetadataServiceTest {
 
     @Test
@@ -19,7 +21,7 @@ public class MetadataServiceTest {
 
         // This will print the initial metadata and then simply refresh (and log) the updated cache.
         // Change the interval inside FluxProducer--by default its 5 mins (change to 1 min for quicker testing).
-        FluxProducer<String, String> producer = new FluxProducer<>(300, 300);
+        FluxProducer<String, String> producer = new FluxProducer<>(new Properties(), 300, 300);
         while (true) {}
     }
 
