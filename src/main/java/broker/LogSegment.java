@@ -163,7 +163,7 @@ public class LogSegment {
         System.out.println("CURRENT SiZE IN BYTES: " + currentSizeInBytes);
     }
 
-    private void flushAsync() {
+    private synchronized void flushAsync() {
         if (buffer.position() == 0) {
             return;
         }
@@ -172,28 +172,37 @@ public class LogSegment {
         byte[] data = new byte[buffer.remaining()];
         buffer.get(data);
 
-        // should i submit copy of the data to be flushed or original? come back later
+        // Capture state for async task before clearing
+        final int bytesToAdd = accumulator.bytes;
+        final int recordsToAdd = accumulator.numRecords;
+        final Map<Integer, Integer> tempOffsets = new HashMap<>(accumulator.tempRecToByteOffsets);
+        
+        // Update state synchronously to prevent race conditions
+        this.currentSizeInBytes += bytesToAdd;
+        this.endOffset += recordsToAdd;
+        
+        // Submit async I/O task
         Future<?> future = FluxExecutor.getExecutorService().submit(() -> {
             try {
                 // note: BufferedOutputStream is a viable alternative here as well for Files.write()
                 Files.write(Path.of(logFile.getPath()), data, StandardOpenOption.APPEND);
 
-                // after data written to disk, then commit entries and offsets and all dat
-                this.currentSizeInBytes += accumulator.bytes;
-                this.endOffset += accumulator.numRecords;
-                accumulator.tempRecToByteOffsets.forEach((key, value) -> {
+                // Update index entries after data written to disk
+                tempOffsets.forEach((key, value) -> {
                     if (!entries.recordOffsetToByteOffsets.containsKey(key)) {
                         entries.createNewEntry(key, value);
                     }
                 });
-                accumulator.reset();
+                
                 helperMethodToPrint();
                 Logger.info("\u001B[32m" + "Flush completed and data written to disk." + "\u001B[0m");
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         });
-        // clear buffer for further operations
+        
+        // Reset accumulator and buffer for further operations
+        accumulator.reset();
         buffer = ByteBuffer.allocateDirect(FLUSH_THRESHOLD_IN_BYTES);
         recOffsetToByteOffsetAndRecLen.clear();
 
