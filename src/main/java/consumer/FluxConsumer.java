@@ -10,51 +10,129 @@ import proto.*;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 
 public class FluxConsumer<K, V> implements Consumer {
     private final ConsumerServiceGrpc.ConsumerServiceBlockingStub blockingStub;
+    private final GroupCoordinatorServiceGrpc.GroupCoordinatorServiceBlockingStub groupCoordinatorServiceBlockingStub;
     private ManagedChannel channel;
+    private GroupCoordinator groupCoordinatorClient;
+
     private int currentOffset = 0;
+    private String groupId = "my-group";
+    private String memberId = "";
+    private int generationId = -1;
+    private String leaderId = "";
+    private boolean isLeader = false;
+    private Assignment myAssignment;
+
+    private Collection<String>  subscribedTopics = List.of();
+    private volatile Assignment assignment;
+    private ScheduledExecutorService hbExec;
+    private ScheduledFuture<?> hbTask;
+
+    private int sessionTimeoutsMs = 10_000;
+    private int rebalanceTimoutMs = 30_000;
+
 
     public FluxConsumer() {
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         blockingStub = ConsumerServiceGrpc.newBlockingStub(channel);
+        groupCoordinatorServiceBlockingStub = GroupCoordinatorServiceGrpc.newBlockingStub(channel);
     }
 
     @Override
     public void subscribe(Collection<String> topics) {
-        //  Create a gRPC request to sub to a list of topics
-        /*
-            SubscribeRequest request = SubscribeRequest.newBuilder()
-            .setPartitionId(partitionId)
-            .setConsumerId(this.consumerId) // Unique ID for this consumer
-            .build();
-         */
+        this.subscribedTopics = new ArrayList<>(topics);
 
-        // Send a request to broker afterward:
-        // SubscribeResponse response = brokerStub.subscribe(request);
+        String rack = "us-east"; // TODO: Lets keep it EAST for now lol
 
-        // Logger messages
+        List<ProtocolMetadata> protocols = List.of(
+                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "range", rack),
+                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "roundrobin", rack)
+        );
+
+        JoinGroupResponse joinResponse = groupCoordinatorClient.joinGroupLoop(
+                groupId,
+                (memberId == null ? "": memberId),
+                sessionTimeoutsMs,
+                rebalanceTimoutMs,
+                protocols
+        );
+
+        this.memberId = joinResponse.getMemberId();
+        this.generationId = joinResponse.getGenerationId();
+        this.leaderId = joinResponse.getLeaderId();
+        this.isLeader = this.memberId.equals(this.leaderId);
+
+        // CASE 1: Build FULL assignment => send all followers info with SyncGroup.
+        if (isLeader) {
+
+            // Populate members.
+            List<String> memberIds = new ArrayList<>();
+            if (joinResponse.getMembersCount() > 0){
+                for (MemberInfo info: joinResponse.getMembersList()) {
+                    memberIds.add(info.getMemberId());
+                }
+            }
+
+            // EDGE CASE: we missed ourselves from the total list.
+            if (!memberIds.contains(memberId)) memberIds.add(memberId);
+
+            // Choose assignor based on negotiated protocol
+            var assignor = selectAssignor(join.getProtocol()); // e.g., "range" / "roundrobin"
+            Map<String, Map<String, List<Integer>>> full =  assignor.assign(memberIds, topicToPartitionCount);
+
+            // Pack full-group map into a single Assignment blob (server will fan out)
+            byte[] fullBytes = encodeFullGroupAssignment(full);
+            Assignment groupBlob = Assignment.newBuilder()
+                    .setAssignment(com.google.protobuf.ByteString.copyFrom(fullBytes))
+                    .build();
+
+            // Leader sends the full assignment
+            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
+                    SyncGroupRequest.newBuilder()
+                            .setGroupId(groupId)
+                            .setGenerationId(generationId)
+                            .setMemberId(memberId)
+                            .setAssignment(groupBlob)
+                            .build()
+            );
+
+            // Server returns my member-specific slice
+//            this.myAssignment = sync.getAssignment();
+
+
+
+
+
+        }
+        else { // CASE 2: We are a Follower, get own assignment.
+            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
+                    SyncGroupRequest.newBuilder()
+                            .setGroupId(groupId)
+                            .setGenerationId(generationId)
+                            .setMemberId(memberId)
+                            .setAssignment(Assignment.getDefaultInstance())
+                            .build()
+            );
+            this.myAssignment = sync.getAssignment();
+        }
+
+        // --- 3) Install my assignment for poll() ---
+        Map<String, List<Integer>> tp = ProtocolCodec.unpackAssignment(this.myAssignment);
+//        installAssignment(tp);
+
+        // --- 4) Start heartbeats; rejoin on errors inside the HB loop ---
+        groupCoordinatorClient.startHeartBeat();
     }
 
     @Override
     public void unsubscribe() {
-        // Create a gRPC request to unsubscribe from all topics
-        /*
-        UnsubscribeRequest request = UnsubscribeRequest.newBuilder()
-                .setPartitionId(partitionId)
-                .setConsumerId(this.consumerId) // Unique ID for this consumer
-                .build();
-        */
 
-        // Send the request to the broker via gRPC
-//        UnsubscribeResponse response = brokerStub.unsubscribe(request);
-
-        // Logger messages
     }
 
     @Override
@@ -105,18 +183,6 @@ public class FluxConsumer<K, V> implements Consumer {
 
     @Override
     public void commitOffsets() {
-        // Create a gRPC request to commit to offset
-        /*
-        CommitRequest request = CommitRequest.newBuilder()
-            .setPartitionId(partitionId)
-            .setConsumerId(this.consumerId)
-            .setOffset(offset)
-            .build();
-         */
 
-        // Send a request to broker
-//        CommitResponse response = brokerStub.commit(request);
-
-        // Logger messages
     }
 }
