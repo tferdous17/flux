@@ -21,7 +21,7 @@ public final class GroupCoordinator {
                                            List<ProtocolMetadata> protocols) {
         long backoffMs = 200;
 
-       while (true) {
+        while (true) {
             JoinGroupRequest request = JoinGroupRequest.newBuilder()
                     .setGroupId(groupId)
                     .setMemberId(memberId == null ? "" : memberId)
@@ -65,11 +65,21 @@ public final class GroupCoordinator {
         }
     }
 
+    // TODO: Research syncGroup programmatically.
+    /*
+    After the leader receives the member list in its JoinGroup response,
+    it computes a partition-to-consumer assignment using the configured assignor
+     and issues a SyncGroup request (with its memberId and the proposed assignment)
+     back to the coordinator. All other members also send SyncGroup with just their memberId.
+     Once the coordinator has received a SyncGroup from each member, it responds with each member’s final partition assignment
+     marking the group as “Stable” and incrementing the generation ID
+     */
     public void syncGroup() {
 
     }
 
 
+    // TODO: implement heartbeat
     public void startHeartBeat() {
 
     }

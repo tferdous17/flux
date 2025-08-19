@@ -22,8 +22,7 @@ public final class LeaderAssignmentPlanner {
             Collection<String> topics,
             Map<String, Integer> topicToPartitionCount
     ) {
-        Map<String, Map<String, List<Integer>>> full =
-                assignor.assign(memberIds, topicToPartitionCount);
+        Map<String, Map<String, List<Integer>>> full = assignor.assign(memberIds, topicToPartitionCount);
 
         byte[] packed = ProtocolCodec.encodeFullGroupAssignment(full);
         return Assignment.newBuilder()
