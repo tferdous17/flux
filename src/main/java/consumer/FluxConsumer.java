@@ -2,6 +2,9 @@ package consumer;
 
 import commons.FluxExecutor;
 import commons.headers.Headers;
+import consumer.assignors.PartitionAssignor;
+import consumer.assignors.RangeAssignor;
+import consumer.assignors.RoundRobinAssignor;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -30,6 +33,7 @@ public class FluxConsumer<K, V> implements Consumer {
     private Assignment myAssignment;
 
     private Collection<String>  subscribedTopics = List.of();
+    private final Map<String, List<Integer>> assignedTopicPartitions = new ConcurrentHashMap<>();
     private volatile Assignment assignment;
     private ScheduledExecutorService hbExec;
     private ScheduledFuture<?> hbTask;
@@ -83,14 +87,13 @@ public class FluxConsumer<K, V> implements Consumer {
             if (!memberIds.contains(memberId)) memberIds.add(memberId);
 
             // Choose assignor based on negotiated protocol
-            var assignor = selectAssignor(join.getProtocol()); // e.g., "range" / "roundrobin"
+            PartitionAssignor assignor = selectAssignor(joinResponse.getProtocol());
+            Map<String, Integer> topicToPartitionCount = fetchPartitionCounts(subscribedTopics);
+
             Map<String, Map<String, List<Integer>>> full =  assignor.assign(memberIds, topicToPartitionCount);
 
-            // Pack full-group map into a single Assignment blob (server will fan out)
-            byte[] fullBytes = encodeFullGroupAssignment(full);
-            Assignment groupBlob = Assignment.newBuilder()
-                    .setAssignment(com.google.protobuf.ByteString.copyFrom(fullBytes))
-                    .build();
+            LeaderAssignmentPlanner planner = new LeaderAssignmentPlanner(assignor);
+            Assignment groupBlob = planner.buildGroupAssignment(memberIds, subscribedTopics, fetchPartitionCounts(subscribedTopics));
 
             // Leader sends the full assignment
             SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
@@ -103,12 +106,7 @@ public class FluxConsumer<K, V> implements Consumer {
             );
 
             // Server returns my member-specific slice
-//            this.myAssignment = sync.getAssignment();
-
-
-
-
-
+            this.myAssignment = sync.getAssignment();
         }
         else { // CASE 2: We are a Follower, get own assignment.
             SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
@@ -124,7 +122,7 @@ public class FluxConsumer<K, V> implements Consumer {
 
         // --- 3) Install my assignment for poll() ---
         Map<String, List<Integer>> tp = ProtocolCodec.unpackAssignment(this.myAssignment);
-//        installAssignment(tp);
+        installAssignment(tp);
 
         // --- 4) Start heartbeats; rejoin on errors inside the HB loop ---
         groupCoordinatorClient.startHeartBeat();
@@ -185,4 +183,39 @@ public class FluxConsumer<K, V> implements Consumer {
     public void commitOffsets() {
 
     }
+
+    private PartitionAssignor selectAssignor(String protocol) {
+        if (protocol == null) protocol = "range";
+        switch (protocol.toLowerCase()) {
+            case "roundrobin":
+                return new RoundRobinAssignor();
+            default:
+                return new RangeAssignor();
+        }
+    }
+
+    // TODO: Replace with a real metadata RPC (e.g., MetadataService) or cache.
+    private Map<String, Integer> fetchPartitionCounts(Collection<String> topics) {
+        Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        for (String t : topics) {
+            if (t != null && !t.isEmpty()) {
+                counts.put(t, 3); // TODO: real value from broker; 3 is a safe mock
+            }
+        }
+        return counts;
+    }
+
+    /** Install the per-member assignment so poll() knows what to read. */
+    private void installAssignment(Map<String, List<Integer>> tp) {
+        assignedTopicPartitions.clear();
+        if (tp != null) {
+            for (Map.Entry<String, List<Integer>> e : tp.entrySet()) {
+                // copy to avoid external mutation
+                assignedTopicPartitions.put(e.getKey(), new ArrayList<>(e.getValue()));
+            }
+        }
+        Logger.info("Installed assignment: " + assignedTopicPartitions);
+        // TODO: If your fetch API needs it, build/refresh a local fetch plan from this map.
+    }
+
 }
