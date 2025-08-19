@@ -37,6 +37,40 @@ public final class ProtocolCodec {
         return "".getBytes((StandardCharsets.UTF_8));
     }
 
+    static byte[] encodeFullGroupAssignment(Map<String, Map<String, List<Integer>>> full) {
+        StringBuilder sb = new StringBuilder();
+        boolean firstMember = true;
+
+        for (Map.Entry<String, Map<String, List<Integer>>> me : full.entrySet()) {
+            if (!firstMember) sb.append("||");
+            firstMember = false;
+
+            String memberId = me.getKey();
+            sb.append(memberId == null ? "" : memberId).append(':');
+
+            Map<String, List<Integer>> tp = me.getValue();
+            if (tp == null || tp.isEmpty()) continue;
+
+            boolean firstTopic = true;
+            for (Map.Entry<String, List<Integer>> te : tp.entrySet()) {
+                if (!firstTopic) sb.append(';');
+                firstTopic = false;
+
+                String topic = te.getKey() == null ? "" : te.getKey();
+                sb.append(topic).append('=');
+
+                List<Integer> parts = te.getValue() == null ? Collections.emptyList()
+                        : new ArrayList<>(te.getValue());
+                Collections.sort(parts);
+                for (int i = 0; i < parts.size(); i++) {
+                    if (i > 0) sb.append(',');
+                    sb.append(parts.get(i));
+                }
+            }
+        }
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
     static Map<String, List<Integer>> decodeAssignment(byte[] bytes) {
         return new LinkedHashMap<>();
     }
