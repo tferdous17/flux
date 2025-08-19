@@ -120,11 +120,11 @@ public class FluxConsumer<K, V> implements Consumer {
             this.myAssignment = sync.getAssignment();
         }
 
-        // --- 3) Install my assignment for poll() ---
+        // TODO: Install my assignment for poll()
         Map<String, List<Integer>> tp = ProtocolCodec.unpackAssignment(this.myAssignment);
         installAssignment(tp);
 
-        // --- 4) Start heartbeats; rejoin on errors inside the HB loop ---
+        // TODO: Start heartbeats
         groupCoordinatorClient.startHeartBeat();
     }
 
@@ -186,12 +186,10 @@ public class FluxConsumer<K, V> implements Consumer {
 
     private PartitionAssignor selectAssignor(String protocol) {
         if (protocol == null) protocol = "range";
-        switch (protocol.toLowerCase()) {
-            case "roundrobin":
-                return new RoundRobinAssignor();
-            default:
-                return new RangeAssignor();
+        if (protocol.equalsIgnoreCase("roundrobin")) {
+            return new RoundRobinAssignor();
         }
+        return new RangeAssignor();
     }
 
     // TODO: Replace with a real metadata RPC (e.g., MetadataService) or cache.
