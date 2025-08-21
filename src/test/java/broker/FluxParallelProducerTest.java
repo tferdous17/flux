@@ -26,7 +26,7 @@ import java.util.concurrent.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class FluxParallelProducerJUnitTest {
+public class FluxParallelProducerTest {
     
     private static final int TEST_PORT = 50051;
     private static final String TEST_TOPIC = "test-topic";
