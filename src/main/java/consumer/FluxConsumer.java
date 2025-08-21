@@ -5,6 +5,7 @@ import commons.headers.Headers;
 import consumer.assignors.PartitionAssignor;
 import consumer.assignors.RangeAssignor;
 import consumer.assignors.RoundRobinAssignor;
+import consumer.assignors.StickyAssignor;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
@@ -74,7 +75,6 @@ public class FluxConsumer<K, V> implements Consumer {
 
         // CASE 1: Build FULL assignment => send all followers info with SyncGroup.
         if (isLeader) {
-
             // Populate members.
             List<String> memberIds = new ArrayList<>();
             if (joinResponse.getMembersCount() > 0){
@@ -96,7 +96,7 @@ public class FluxConsumer<K, V> implements Consumer {
             Assignment groupBlob = planner.buildGroupAssignment(memberIds, subscribedTopics, fetchPartitionCounts(subscribedTopics));
 
             // Leader sends the full assignment
-            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
+            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup( // TODO: Missing SyncGroup.
                     SyncGroupRequest.newBuilder()
                             .setGroupId(groupId)
                             .setGenerationId(generationId)
@@ -109,7 +109,7 @@ public class FluxConsumer<K, V> implements Consumer {
             this.myAssignment = sync.getAssignment();
         }
         else { // CASE 2: We are a Follower, get own assignment.
-            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup(
+            SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup( // TODO: Missing SyncGroup.
                     SyncGroupRequest.newBuilder()
                             .setGroupId(groupId)
                             .setGenerationId(generationId)
@@ -186,10 +186,11 @@ public class FluxConsumer<K, V> implements Consumer {
 
     private PartitionAssignor selectAssignor(String protocol) {
         if (protocol == null) protocol = "range";
-        if (protocol.equalsIgnoreCase("roundrobin")) {
-            return new RoundRobinAssignor();
-        }
-        return new RangeAssignor();
+        return switch (protocol.toLowerCase()) {
+            case "roundrobin" -> new RoundRobinAssignor();
+            case "sticky" -> new StickyAssignor();
+            default -> new RangeAssignor();
+        };
     }
 
     // TODO: Replace with a real metadata RPC (e.g., MetadataService) or cache.
@@ -203,7 +204,6 @@ public class FluxConsumer<K, V> implements Consumer {
         return counts;
     }
 
-    /** Install the per-member assignment so poll() knows what to read. */
     private void installAssignment(Map<String, List<Integer>> tp) {
         assignedTopicPartitions.clear();
         if (tp != null) {
@@ -213,7 +213,7 @@ public class FluxConsumer<K, V> implements Consumer {
             }
         }
         Logger.info("Installed assignment: " + assignedTopicPartitions);
-        // TODO: If your fetch API needs it, build/refresh a local fetch plan from this map.
+        // TODO: If fetch API needs it, build/refresh a local fetch plan from this map.
     }
 
 }

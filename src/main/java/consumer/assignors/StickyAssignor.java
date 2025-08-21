@@ -1,12 +1,10 @@
 package consumer.assignors;
 
-import consumer.assignors.PartitionAssignor;
-
 import java.util.*;
 
-// TODO: Investigate RangeAssignor
-public final class RangeAssignor implements PartitionAssignor {
 
+// TODO: Investigate StickyAssignor
+public class StickyAssignor implements PartitionAssignor {
     @Override
     public Map<String, Map<String, List<Integer>>> assign(
             List<String> memberIds,
