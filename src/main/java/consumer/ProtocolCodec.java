@@ -6,6 +6,7 @@ import proto.ProtocolMetadata;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+// TODO: RESEARCH ENCODING/DECODING perhaps use Kyro again? (Everything Below)
 public final class ProtocolCodec {
 
     public static ProtocolMetadata buildProtocolMetadata(Collection<String> topics, String assignor, String rack) {
@@ -27,16 +28,12 @@ public final class ProtocolCodec {
         return decodeAssignment(a.getAssignment().toByteArray());
     }
 
-
-    // TODO: RESEARCH ENCODING/DECODING perhaps use Kyro again?
     static byte[] encodeMetadata(Collection<String> topics, String... pairs) {
         return "".getBytes((StandardCharsets.UTF_8));
     }
-
     static byte[] encodeAssignment(Map<String, List<Integer>> topicPartitions) {
         return "".getBytes((StandardCharsets.UTF_8));
     }
-
     static byte[] encodeFullGroupAssignment(Map<String, Map<String, List<Integer>>> full) {
         StringBuilder sb = new StringBuilder();
         boolean firstMember = true;
@@ -70,7 +67,6 @@ public final class ProtocolCodec {
         }
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
-
     static Map<String, List<Integer>> decodeAssignment(byte[] bytes) {
         return new LinkedHashMap<>();
     }
