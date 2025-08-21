@@ -1,6 +1,6 @@
 package grpc;
 
-import broker.Broker;
+import server.internal.Broker;
 import grpc.services.ConsumerServiceImpl;
 import grpc.services.CreateTopicsServiceImpl;
 import grpc.services.MetadataServiceImpl;
@@ -34,7 +34,7 @@ public class BrokerServer {
                 .build()
                 .start();
 
-        System.out.println("Server started on port " + port);
+        System.out.printf("Server started @ %s:%d with broker ID = %s%n", broker.getHost(), port, broker.getBrokerId());
 
         Runtime.getRuntime().addShutdownHook(new Thread() {
             @Override

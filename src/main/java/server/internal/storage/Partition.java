@@ -1,4 +1,4 @@
-package broker;
+package server.internal.storage;
 import producer.RecordBatch;
 import proto.Message;
 
@@ -7,13 +7,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class Partition {
     private Log log;
+    private String topic;
     private int partitionId;
     private AtomicInteger currentOffset = new AtomicInteger(0);
 
-
-    public Partition(int partitionId) throws IOException {
+    public Partition(String topic, int partitionId) throws IOException {
+        this.topic = topic;
         this.partitionId = partitionId;
-        this.log = new Log(partitionId);
+        this.log = new Log(topic, partitionId);
         this.currentOffset = new AtomicInteger(log.getLogEndOffset());
     }
 

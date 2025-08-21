@@ -1,6 +1,6 @@
 package metadata;
 
-import broker.Partition;
+import server.internal.storage.Partition;
 import commons.FluxTopic;
 import commons.IntRange;
 

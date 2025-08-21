@@ -3,11 +3,10 @@ package broker;
 
 import org.junit.jupiter.api.Test;
 import producer.RecordBatch;
+import server.internal.storage.LogSegment;
+import server.internal.storage.Partition;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -16,13 +15,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
         @Test
         public void ParitionConstructorTest() throws IOException {
-            Partition parition = new Partition(23);
+            Partition parition = new Partition("topic", 23);
             System.out.println(parition);
         }
 
         @Test
         public void appendRecordBatchTest() throws IOException {
-        Partition partition = new Partition(4);
+        Partition partition = new Partition("topic", 4);
         RecordBatch batch = new RecordBatch();
 
         // Append fake records
@@ -37,13 +36,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
         @Test
         public void createNewSegmentTest() throws IOException {
-            LogSegment logSegment = new LogSegment(0,1);
+            LogSegment logSegment = new LogSegment("topic", 0,1);
             assertNotNull(logSegment); // Making Sure segment is not null
             System.out.println("Log segment created.");
         }
         @Test
         public void canAppendRecordToSegmentTest() throws IOException {
-            Partition part = new Partition(5);
+            Partition part = new Partition("topic", 5);
             RecordBatch batch = new RecordBatch();
 
             batch.append(new byte[]{1, 3, 2, 4, 9, 12, 34, 123, 93});

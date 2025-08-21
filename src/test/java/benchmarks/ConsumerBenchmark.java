@@ -1,6 +1,6 @@
 package benchmarks;
 
-import broker.Broker;
+import server.internal.Broker;
 import consumer.FluxConsumer;
 import consumer.PollResult;
 import grpc.BrokerServer;
