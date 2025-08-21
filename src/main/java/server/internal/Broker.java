@@ -37,12 +37,13 @@ public class Broker {
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            this.partitions.add(new Partition("default-topic", partitionIdCounter++));
+            // All the default partitions that get created upon broker initialization (not part of any topic) will have this topic name
+            this.partitions.add(new Partition("DEFAULT", partitionIdCounter++));
         }
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
-        this(brokerId, host, port, 1); // Default to 3 partitions
+        this(brokerId, host, port, 1); // Default to 1 partitions
     }
 
     public Broker() throws IOException {
