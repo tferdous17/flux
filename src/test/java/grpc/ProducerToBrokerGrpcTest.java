@@ -1,15 +1,13 @@
 package grpc;
 
-import admin.Admin;
-import admin.FluxAdmin;
 import admin.NewTopic;
-import broker.Broker;
+import server.internal.Broker;
 import org.junit.jupiter.api.Test;
 import producer.FluxProducer;
 import producer.ProducerRecord;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.Properties;
 
 public class ProducerToBrokerGrpcTest {
 
@@ -26,9 +24,10 @@ public class ProducerToBrokerGrpcTest {
             Thread.currentThread().interrupt();
         }
 
-        Admin admin = FluxAdmin.create(List.of("localhost:50051")); // bootstrap server
+        // this is the address to the broker
+//        Admin admin = FluxAdminClient.create(Set.of(new InetSocketAddress("localhost", 50051))); // bootstrap server
         NewTopic topic = new NewTopic("test-topic", 3, 1);
-        admin.createTopics(List.of(topic));
+//        admin.createTopics(List.of(topic));
 
         // Start client
         startClient();
@@ -59,7 +58,7 @@ public class ProducerToBrokerGrpcTest {
 
     // Make sure to manually close when done with testing this
     private static void startClient() {
-        FluxProducer<String, String> producer = new FluxProducer<>(15, 60);
+        FluxProducer<String, String> producer = new FluxProducer<>(new Properties(), 15, 60);
         while (true) {
             String t = randStringGen();
 

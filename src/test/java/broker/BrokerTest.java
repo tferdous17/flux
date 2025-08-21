@@ -2,6 +2,7 @@ package broker;
 
 import org.junit.jupiter.api.Test;
 import producer.RecordBatch;
+import server.internal.Broker;
 
 import java.io.IOException;
 

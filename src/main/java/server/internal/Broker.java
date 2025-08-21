@@ -1,11 +1,14 @@
-package broker;
+package server.internal;
 
 import commons.FluxTopic;
+import commons.utils.PartitionWriteManager;
 import metadata.InMemoryTopicMetadataRepository;
+import metadata.Metadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
 import proto.Message;
+import server.internal.storage.Partition;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -34,17 +37,18 @@ public class Broker {
 
         // Create multiple partitions
         for (int i = 0; i < numPartitions; i++) {
-            this.partitions.add(new Partition(partitionIdCounter++));
+            // All the default partitions that get created upon broker initialization (not part of any topic) will have this topic name
+            this.partitions.add(new Partition("DEFAULT", partitionIdCounter++));
         }
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
-        this(brokerId, host, port, 3); // Default to 3 partitions
+        this(brokerId, host, port, 1); // Default to 1 partitions
     }
 
     public Broker() throws IOException {
         // Default to 1 partition since all records technically require a topic field.
-        this("BROKER-1", "localhost", 50051, 1);
+        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, 1);
     }
 
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
@@ -60,7 +64,7 @@ public class Broker {
 
         List<Partition> topicPartitions = new ArrayList<>();
         for (int i = 0; i < numPartitionsToCreate; i++) {
-            Partition p = new Partition(partitionIdCounter++);
+            Partition p = new Partition(topicName, partitionIdCounter++);
             this.partitions.add(p);
             topicPartitions.add(p);
             this.numPartitions++;
@@ -79,12 +83,10 @@ public class Broker {
             throw new IllegalArgumentException("Topic already exists: %s".formatted(topicName));
         }
         if (numPartitions < 1) {
-            throw new IllegalArgumentException(
-                    "Number of partitions can not be less than 1: %d".formatted(numPartitions));
+            throw new IllegalArgumentException("Number of partitions can not be less than 1: %d".formatted(numPartitions));
         }
         if (replicationFactor < 0 || replicationFactor > MAX_REPLICATION_FACTOR) {
-            throw new IllegalArgumentException("Replication factor can not be negative or >%d: %d"
-                    .formatted(MAX_REPLICATION_FACTOR, replicationFactor));
+            throw new IllegalArgumentException("Replication factor can not be negative or >%d: %d".formatted(MAX_REPLICATION_FACTOR, replicationFactor));
         }
     }
 
@@ -96,8 +98,7 @@ public class Broker {
         return writeManager.writeToPartition(targetPartition, record);
     }
 
-    // ! Not currently using this below method, general functionality already
-    // handled by the other produceMessages()
+    // ! Not currently using this below method, general functionality already handled by the other produceMessages()
     public void produceMessages(RecordBatch batch) throws IOException {
         // For batches, use round-robin distribution since we can't easily extract keys
         // from the batch without decomposing it
@@ -120,8 +121,7 @@ public class Broker {
         Logger.info("Appended %d records to broker.".formatted(counter));
         System.out.println("PRINTING # OF RECORDS PER PARTITION:");
         for (Partition partition : partitions) {
-            System.out.println("Partition " + partition.getPartitionId() + " contains: " + partition.getCurrentOffset()
-                    + " records");
+            System.out.println("Partition " + partition.getPartitionId() + " contains: " + partition.getCurrentOffset() + " records");
         }
 
         return lastRecordOffset;

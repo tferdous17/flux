@@ -1,6 +1,6 @@
 package commons;
 
-import broker.Partition;
+import server.internal.storage.Partition;
 
 import java.util.List;
 

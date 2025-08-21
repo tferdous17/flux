@@ -2,10 +2,10 @@ package broker;
 
 import org.junit.jupiter.api.Test;
 import producer.RecordBatch;
+import server.internal.storage.LogSegment;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -13,19 +13,19 @@ import java.nio.file.Path;
 public class LogSegmentTest {
     @Test
     public void normalLogSegmentConstructorTest() throws IOException {
-        LogSegment logSegment = new LogSegment(0,1);
+        LogSegment logSegment = new LogSegment("topic", 0,1);
         System.out.println(logSegment);
     }
 
     @Test
     public void overloadedLogSegmentConstructorTest() throws IOException {
-        LogSegment logSegment = new LogSegment(1,1);
+        LogSegment logSegment = new LogSegment("topic", 1,1);
         System.out.println(logSegment);
     }
 
     @Test
     public void writeBatchToSegmentTest() throws IOException {
-        LogSegment segment = new LogSegment(0, 0, 231);
+        LogSegment segment = new LogSegment("test-topic", 0, 231);
         RecordBatch batch = new RecordBatch();
 
         // append fake data

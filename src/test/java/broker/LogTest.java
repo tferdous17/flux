@@ -1,6 +1,8 @@
 package broker;
 
 import org.junit.jupiter.api.Test;
+import server.internal.storage.Log;
+import server.internal.storage.LogSegment;
 
 import java.io.IOException;
 import java.util.List;
@@ -9,20 +11,20 @@ import java.util.List;
 public class LogTest {
     @Test
     public void defaultConstructorTest() throws IOException {
-        Log log = new Log(1);
+        Log log = new Log("topic", 1);
         System.out.println(log);
     }
 
     @Test
     public void existingLogSegmentConstructorTest() throws IOException {
-        Log log = new Log( new LogSegment(1,0), 1);
+        Log log = new Log( new LogSegment("topic", 1,0), 1);
         System.out.println(log);
     }
 
     @Test
     public void existingLogSegmentListConstructorTest() throws IOException {
-        LogSegment premadeLogSegment1 = new LogSegment(1, 0);
-        LogSegment premadeLogSegment2 = new LogSegment(1, 0);
+        LogSegment premadeLogSegment1 = new LogSegment("topic", 1, 0);
+        LogSegment premadeLogSegment2 = new LogSegment("topic", 1, 0);
         Log log = new Log(List.of(premadeLogSegment1, premadeLogSegment2));
         System.out.println(log);
     }

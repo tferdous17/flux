@@ -19,19 +19,28 @@ import proto.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class FluxProducer<K, V> implements Producer, MetadataListener {
     private final PublishToBrokerGrpc.PublishToBrokerFutureStub publishToBrokerFutureStub;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
+    private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
     private final Metadata metadata;
     private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
 
-    public FluxProducer(long initialFlushDelay, long flushDelayInterval) {
-        channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
+    public FluxProducer(Properties props, long initialFlushDelay, long flushDelayInterval) {
+        // Props will be used to select which broker a producer would like to send to
+        // ! Will not work until Controller + Partition Distribution tickets are complete as all partitions are in first broker by default
+        if (props.containsKey("bootstrap.servers")) {
+            // TODO: Technically some input validation would be good here
+            bootstrapServer = props.get("bootstrap.servers").toString();
+        }
+
+        channel = Grpc.newChannelBuilder(bootstrapServer, InsecureChannelCredentials.create()).build();
         publishToBrokerFutureStub = PublishToBrokerGrpc.newFutureStub(channel);
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
         buffer = new ArrayList<>();
@@ -46,11 +55,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     public FluxProducer(long flushDelayInterval) {
-        this(60, flushDelayInterval);
+        this(new Properties(), 60, flushDelayInterval);
     }
 
     public FluxProducer() {
-        this(60, 60);
+        this(new Properties(), 60, 60);
     }
 
     public void printMetadataForTesting() {

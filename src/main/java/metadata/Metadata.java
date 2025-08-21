@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -30,6 +31,8 @@ public class Metadata {
     private ManagedChannel channel;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private List<MetadataListener> listeners = new ArrayList<>();
+    public static AtomicInteger brokerIdCounter = new AtomicInteger(1);
+    public static AtomicInteger clusterIdCounter = new AtomicInteger(1);
 
     public Metadata(int refreshIntervalSec) {
         this.refreshIntervalSec = refreshIntervalSec;
