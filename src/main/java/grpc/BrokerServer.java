@@ -1,10 +1,7 @@
 package grpc;
 
+import grpc.services.*;
 import server.internal.Broker;
-import grpc.services.ConsumerServiceImpl;
-import grpc.services.CreateTopicsServiceImpl;
-import grpc.services.MetadataServiceImpl;
-import grpc.services.ProducerServiceImpl;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
@@ -31,6 +28,7 @@ public class BrokerServer {
                 .addService(new ConsumerServiceImpl(this.broker))
                 .addService(new CreateTopicsServiceImpl(this.broker))
                 .addService(new MetadataServiceImpl(this.broker))
+                .addService(new ControllerServiceImpl(this.broker))
                 .build()
                 .start();
 

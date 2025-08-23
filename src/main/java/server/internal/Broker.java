@@ -1,21 +1,31 @@
 package server.internal;
 
+import com.google.common.util.concurrent.FutureCallback;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import commons.FluxExecutor;
 import commons.FluxTopic;
 import commons.utils.PartitionWriteManager;
+import io.grpc.Grpc;
+import io.grpc.InsecureChannelCredentials;
+import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelRegistry;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
+import proto.BrokerRegistrationRequest;
+import proto.BrokerRegistrationResult;
+import proto.ControllerServiceGrpc;
 import proto.Message;
 import server.internal.storage.Partition;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class Broker {
+public class Broker implements Controller {
     private String brokerId;
     private String host;
     private int port; // ex: port 8080
@@ -24,6 +34,12 @@ public class Broker {
     private int partitionIdCounter = 1;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
     private final PartitionWriteManager writeManager;
+
+    private boolean isActiveController = false;
+    private String controllerEndpoint = ""; // "localhost:50051"
+    private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
+    private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
+    private ManagedChannel channel;
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
@@ -51,7 +67,12 @@ public class Broker {
         this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, 1);
     }
 
+    @Override
     public void createTopics(Collection<proto.Topic> topics) throws IOException {
+        if (!isActiveController) {
+            return;
+        }
+
         // right now just worry about creating 1 topic
         proto.Topic firstTopic = topics.stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
@@ -73,6 +94,52 @@ public class Broker {
         FluxTopic topic = new FluxTopic(topicName, topicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
         Logger.info("BROKER: Create topics completed successfully.");
+    }
+
+    @Override
+    public void registerBroker() {
+        // Allows non-controller nodes to send registration requests to the current active controller in the cluster
+        if (!isActiveController && !controllerEndpoint.isEmpty()) {
+            // Establish channel connection first to the controller + stub instantiation
+            channel = Grpc.newChannelBuilder(controllerEndpoint, InsecureChannelCredentials.create()).build();
+            futureStub = ControllerServiceGrpc.newFutureStub(channel);
+
+            BrokerRegistrationRequest request = BrokerRegistrationRequest
+                    .newBuilder()
+                    .setBrokerId(this.brokerId)
+                    .setBrokerHost(this.host)
+                    .setBrokerPort(this.port)
+                    .build();
+
+            Logger.info(brokerId + " @ " + host + ":" + port + " SENDING OVER REGISTER BROKER REQUEST TO CONTROLLER @ " + controllerEndpoint);
+            ListenableFuture<BrokerRegistrationResult> response = futureStub.registerBroker(request);
+            Futures.addCallback(response, new FutureCallback<BrokerRegistrationResult>() {
+                @Override
+                public void onSuccess(BrokerRegistrationResult result) {
+                    Logger.info(result.getAcknowledgement());
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    Logger.error(t);
+                }
+            }, FluxExecutor.getExecutorService());
+
+        }
+    }
+
+    @Override
+    public void unregisterBroker(String brokerId) {
+        if (!isActiveController) {
+            return;
+        }
+    }
+
+    @Override
+    public void processBrokerHeartbeat() {
+        if (!isActiveController) {
+            return;
+        }
     }
 
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
@@ -147,6 +214,8 @@ public class Broker {
         return targetPartition.getRecordAtOffset(startingOffset);
     }
 
+
+
     public String getBrokerId() {
         return brokerId;
     }
@@ -186,5 +255,25 @@ public class Broker {
      */
     public int getPartitionCount() {
         return numPartitions;
+    }
+
+    public void setIsActiveController(boolean isActiveController) {
+        this.isActiveController = isActiveController;
+    }
+
+    public boolean isActiveController() {
+        return this.isActiveController;
+    }
+
+    public void setControllerEndpoint(String controllerEndpoint) {
+        this.controllerEndpoint = controllerEndpoint;
+    }
+
+    public String getControllerEndpoint() {
+        return this.controllerEndpoint;
+    }
+
+    public Map<String, String> getFollowerNodeEndpoints() {
+        return followerNodeEndpoints;
     }
 }
