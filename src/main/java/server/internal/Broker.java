@@ -27,7 +27,7 @@ public class Broker implements Controller {
     private int port; // ex: port 8080
     private int numPartitions;
     private List<Partition> partitions;
-    private int partitionIdCounter = 1;
+    private int partitionIdCounter = 0;
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
     private final PartitionWriteManager writeManager;
 
@@ -195,8 +195,8 @@ public class Broker implements Controller {
     }
 
     public int produceSingleMessage(int targetPartitionId, byte[] record) throws IOException {
-        // Note: Partition IDs are NOT 0-indexed
-        Partition targetPartition = partitions.get(targetPartitionId - 1);
+        // Note: Partition IDs are 0-indexed now
+        Partition targetPartition = partitions.get(targetPartitionId);
 
         // Use the write manager for thread-safe write operation
         return writeManager.writeToPartition(targetPartition, record);
@@ -235,19 +235,20 @@ public class Broker implements Controller {
     public Message consumeMessage(int startingOffset) throws IOException {
         // Default to partition 0 for backward compatibility
         // TODO: Replace placeholder partitionID
-        return consumeMessage(1, startingOffset);
+        return consumeMessage(0, startingOffset);
     }
 
     /**
      * Consume a message from a specific partition at the given offset
      */
     public Message consumeMessage(int partitionId, int startingOffset) throws IOException {
-        if (partitionId < 1 || partitionId > numPartitions) {
+        if (partitionId < 0 || partitionId >= numPartitions) {
             throw new IllegalArgumentException(
-                    "Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions));
+                // since partition IDs are 0-indexed now we take the number of partitions and subtract 1
+                    "Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
         }
 
-        Partition targetPartition = partitions.get(partitionId - 1);
+        Partition targetPartition = partitions.get(partitionId);
         return targetPartition.getRecordAtOffset(startingOffset);
     }
 
@@ -273,11 +274,11 @@ public class Broker implements Controller {
      * Get a specific partition by ID
      */
     public Partition getPartition(int partitionId) {
-        if (partitionId < 1 || partitionId > numPartitions) {
+        if (partitionId < 0 || partitionId >= numPartitions) {
             throw new IllegalArgumentException(
-                    "Invalid partition ID: %d. Valid range: 1-%d".formatted(partitionId, numPartitions));
+                    "Invalid partition ID: %d. Valid range: 0-%d".formatted(partitionId, numPartitions - 1));
         }
-        return partitions.get(partitionId - 1);
+        return partitions.get(partitionId);
     }
 
     /**
