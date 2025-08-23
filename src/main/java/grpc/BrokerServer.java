@@ -14,14 +14,14 @@ public class BrokerServer {
 
     private Server server;
     private final Broker broker;
+    private final ExecutorService executor;
 
     public BrokerServer(Broker broker) {
+        executor = Executors.newFixedThreadPool(6);
         this.broker = broker;
     }
 
     public void start(int port) throws IOException {
-
-        ExecutorService executor = Executors.newFixedThreadPool(6);
         server = Grpc.newServerBuilderForPort(port, InsecureServerCredentials.create())
                 .executor(executor)
                 .addService(new ProducerServiceImpl(this.broker))
@@ -59,6 +59,7 @@ public class BrokerServer {
         if (server != null) {
             server.shutdown();
         }
+        executor.shutdown();
     }
 
     public void blockUntilShutdown() throws InterruptedException {
@@ -66,5 +67,4 @@ public class BrokerServer {
             server.awaitTermination();
         }
     }
-
 }
