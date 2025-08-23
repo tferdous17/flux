@@ -1,6 +1,7 @@
 package grpc;
 
 import grpc.services.*;
+import org.tinylog.Logger;
 import server.internal.Broker;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -19,6 +20,7 @@ public class BrokerServer {
     public BrokerServer(Broker broker) {
         executor = Executors.newFixedThreadPool(6);
         this.broker = broker;
+        this.broker.registerShutdownCallback(() -> stop());
     }
 
     public void start(int port) throws IOException {
@@ -58,6 +60,12 @@ public class BrokerServer {
     public void stop() throws InterruptedException {
         if (server != null) {
             server.shutdown();
+            Logger.info("Server @ %s:%d with broker ID = %s has shut down."
+                    .formatted(broker.getHost(),
+                            broker.getPort(),
+                            broker.getBrokerId()
+                    )
+            );
         }
         executor.shutdown();
     }

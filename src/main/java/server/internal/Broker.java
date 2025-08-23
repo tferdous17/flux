@@ -9,7 +9,6 @@ import commons.utils.PartitionWriteManager;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelRegistry;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import org.tinylog.Logger;
@@ -37,6 +36,7 @@ public class Broker implements Controller {
     private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
     private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
     private ManagedChannel channel;
+    private ShutdownCallback shutdownCallback;
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
@@ -143,8 +143,11 @@ public class Broker implements Controller {
                 @Override
                 public void onSuccess(DecommissionBrokerResult result) {
                     Logger.info(result.getAcknowledgement());
-
-                    // TODO: Broker must now gracefully shutdown upon successful ack from controller
+                    try {
+                        shutdownCallback.stop();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
 
                 @Override
@@ -152,6 +155,20 @@ public class Broker implements Controller {
                     Logger.error(t);
                 }
             }, FluxExecutor.getExecutorService());
+        }
+    }
+
+    public void registerShutdownCallback(ShutdownCallback callback) {
+        this.shutdownCallback = callback;
+    }
+
+    // ! Only for testing purposes
+    public void triggerManualBrokerShutdown() {
+        try {
+            Logger.info("Triggering manual broker shutdown.");
+            shutdownCallback.stop();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 
