@@ -62,7 +62,7 @@ public class FluxParallelProducerTest {
         
         // Create topic with partitions
         List<Partition> partitions = new ArrayList<>();
-        for (int i = 1; i <= NUM_PARTITIONS; i++) {
+        for (int i = 0; i < NUM_PARTITIONS; i++) {
             partitions.add(broker.getPartition(i));
         }
         FluxTopic testTopic = new FluxTopic(TEST_TOPIC, partitions, 1);
@@ -144,7 +144,7 @@ public class FluxParallelProducerTest {
         
         // Verify messages were received by the broker
         int totalMessages = 0;
-        for (int i = 1; i <= NUM_PARTITIONS; i++) {
+        for (int i = 0; i < NUM_PARTITIONS; i++) {
             int count = broker.getPartition(i).getCurrentOffset();
             totalMessages += count;
             Logger.info("Partition {} received {} messages", i, count);
