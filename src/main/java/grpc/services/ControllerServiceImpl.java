@@ -2,12 +2,13 @@ package grpc.services;
 
 import io.grpc.stub.StreamObserver;
 import org.tinylog.Logger;
-import proto.BrokerRegistrationRequest;
-import proto.BrokerRegistrationResult;
-import proto.ControllerServiceGrpc;
-import proto.Status;
+import proto.*;
 import server.internal.Broker;
 
+/**
+ * Below methods are handled by the Controller node specifically.
+ * Non-controller nodes are not expected to return responses of any kind, but do send requests (i.e., BrokerRegistrationRequest)
+ */
 public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServiceImplBase {
     Broker broker;
 
@@ -17,7 +18,6 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
 
     @Override
     public void registerBroker(BrokerRegistrationRequest req, StreamObserver<BrokerRegistrationResult> responseObserver) {
-        // Non-controller nodes should not be returning a response for Broker registration.
         if (!broker.isActiveController()) {
             return;
         }
@@ -40,6 +40,39 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
                 .put(req.getBrokerId(), "%s:%d".formatted(req.getBrokerHost(), req.getBrokerPort()));
 
         Logger.info("Current follower nodes: " + broker.getFollowerNodeEndpoints().toString());
+
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void unregisterBroker(UnregisterBrokerRequest req, StreamObserver<UnregisterBrokerResult> responseObserver) {
+        if (!broker.isActiveController()) {
+            return;
+        }
+
+        UnregisterBrokerResult response = UnregisterBrokerResult.newBuilder()
+                .setAcknowledgement("ACK: Controller {broker=%s, address=%s:%d} received UnregisterBrokerRequest from {node=%s}. Removing broker from followers."
+                        .formatted(
+                                this.broker.getBrokerId(),
+                                this.broker.getHost(),
+                                this.broker.getPort(),
+                                req.getBrokerId()
+                        )
+                )
+                .setStatus(Status.SUCCESS)
+                .build();
+
+        broker.getFollowerNodeEndpoints().remove(req.getBrokerId());
+
+        Logger.info("Removed follower node {node=%s} from this cluster with Controller {broker=%s, address=%s:%d}"
+                .formatted(
+                        req.getBrokerId(),
+                        this.broker.getBrokerId(),
+                        this.broker.getHost(),
+                        this.broker.getPort()
+                )
+        );
 
         responseObserver.onNext(response);
         responseObserver.onCompleted();

@@ -7,6 +7,7 @@ option java_multiple_files = true;
 
 service ControllerService {
   rpc RegisterBroker(BrokerRegistrationRequest) returns (BrokerRegistrationResult);
+  rpc UnregisterBroker(UnregisterBrokerRequest) returns (UnregisterBrokerResult);
 }
 
 message BrokerRegistrationRequest {
@@ -16,6 +17,15 @@ message BrokerRegistrationRequest {
 }
 
 message BrokerRegistrationResult {
+  string acknowledgement = 1;
+  Status status = 2;
+}
+
+message UnregisterBrokerRequest {
+  string broker_id = 1;
+}
+
+message UnregisterBrokerResult {
   string acknowledgement = 1;
   Status status = 2;
 }
