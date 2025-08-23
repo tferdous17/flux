@@ -7,7 +7,7 @@ option java_multiple_files = true;
 
 service ControllerService {
   rpc RegisterBroker(BrokerRegistrationRequest) returns (BrokerRegistrationResult);
-  rpc UnregisterBroker(UnregisterBrokerRequest) returns (UnregisterBrokerResult);
+  rpc DecommissionBroker(DecommissionBrokerRequest) returns (DecommissionBrokerResult);
 }
 
 message BrokerRegistrationRequest {
@@ -21,11 +21,12 @@ message BrokerRegistrationResult {
   Status status = 2;
 }
 
-message UnregisterBrokerRequest {
+message DecommissionBrokerRequest {
   string broker_id = 1;
+  // TODO: Might need more fields here, but wont know until later tickets get implemented first
 }
 
-message UnregisterBrokerResult {
+message DecommissionBrokerResult {
   string acknowledgement = 1;
   Status status = 2;
 }
