@@ -9,8 +9,8 @@ import java.util.*;
 // TODO: RESEARCH ENCODING/DECODING perhaps use Kyro again? (Everything Below)
 public final class ProtocolCodec {
 
-    public static ProtocolMetadata buildProtocolMetadata(Collection<String> topics, String assignor, String rack) {
-        byte[] md = encodeMetadata(topics, "assignor=" + assignor, "clientRack=" + rack);
+    public static ProtocolMetadata buildProtocolMetadata(Collection<String> topics, String assignor) {
+        byte[] md = encodeMetadata(topics, "assignor=" + assignor);
         return ProtocolMetadata.newBuilder()
                 .setName(assignor)
                 .setMetadata(ByteString.copyFrom(md))

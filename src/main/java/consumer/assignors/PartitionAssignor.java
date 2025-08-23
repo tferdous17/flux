@@ -5,7 +5,7 @@ import java.util.Map;
 
 
 public interface PartitionAssignor {
-    Map<String, Map<String, java.util.List<Integer>>> assign(
+    Map<String, Map<String, List<Integer>>> assign(
             List<String> memberIds,
             Map<String, Integer> topicToPartitionCount
     );
