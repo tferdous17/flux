@@ -46,13 +46,13 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
     }
 
     @Override
-    public void unregisterBroker(UnregisterBrokerRequest req, StreamObserver<UnregisterBrokerResult> responseObserver) {
+    public void decommissionBroker(DecommissionBrokerRequest req, StreamObserver<DecommissionBrokerResult> responseObserver) {
         if (!broker.isActiveController()) {
             return;
         }
 
-        UnregisterBrokerResult response = UnregisterBrokerResult.newBuilder()
-                .setAcknowledgement("ACK: Controller {broker=%s, address=%s:%d} received UnregisterBrokerRequest from {node=%s}. Removing broker from followers."
+        DecommissionBrokerResult response = DecommissionBrokerResult.newBuilder()
+                .setAcknowledgement("ACK: Controller {broker=%s, address=%s:%d} received DecommissionBrokerRequest from {node=%s}. Removing this broker from followers and gracefully shutting it down."
                         .formatted(
                                 this.broker.getBrokerId(),
                                 this.broker.getHost(),
@@ -60,12 +60,12 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
                                 req.getBrokerId()
                         )
                 )
-                .setStatus(Status.SUCCESS)
+                .setStatus(Status.BROKER_SHUTDOWN_IN_PROGRESS)
                 .build();
 
         broker.getFollowerNodeEndpoints().remove(req.getBrokerId());
 
-        Logger.info("Removed follower node {node=%s} from this cluster with Controller {broker=%s, address=%s:%d}"
+        Logger.info("Removed follower node {node=%s} from this cluster with Controller {broker=%s, address=%s:%d}. Broker is clear to gracefully shutdown."
                 .formatted(
                         req.getBrokerId(),
                         this.broker.getBrokerId(),

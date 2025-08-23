@@ -125,24 +125,26 @@ public class Broker implements Controller {
     }
 
     @Override
-    public void unregisterBroker() {
+    public void decommissionBroker() {
         if (controllerEndpoint.isEmpty()) {
-            Logger.warn("Cannot unregister broker that is not part of any cluster.");
+            Logger.warn("Cannot decommission broker that is not part of any cluster.");
             return;
         }
 
         if (!isActiveController) {
-            UnregisterBrokerRequest request = UnregisterBrokerRequest
+            DecommissionBrokerRequest request = DecommissionBrokerRequest
                     .newBuilder()
                     .setBrokerId(this.brokerId)
                     .build();
 
-            Logger.info(brokerId + " @ " + host + ":" + port + " SENDING OVER UNREGISTER BROKER REQUEST TO CONTROLLER @ " + controllerEndpoint);
-            ListenableFuture<UnregisterBrokerResult> response = futureStub.unregisterBroker(request);
-            Futures.addCallback(response, new FutureCallback<UnregisterBrokerResult>() {
+            Logger.info(brokerId + " @ " + host + ":" + port + " SENDING OVER DECOMMISSION BROKER REQUEST TO CONTROLLER @ " + controllerEndpoint);
+            ListenableFuture<DecommissionBrokerResult> response = futureStub.decommissionBroker(request);
+            Futures.addCallback(response, new FutureCallback<DecommissionBrokerResult>() {
                 @Override
-                public void onSuccess(UnregisterBrokerResult result) {
+                public void onSuccess(DecommissionBrokerResult result) {
                     Logger.info(result.getAcknowledgement());
+
+                    // TODO: Broker must now gracefully shutdown upon successful ack from controller
                 }
 
                 @Override

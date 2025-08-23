@@ -16,6 +16,6 @@ import java.util.Collection;
 public interface Controller {
     void createTopics(Collection<Topic> topics) throws IOException;
     void registerBroker();
-    void unregisterBroker();
+    void decommissionBroker();
     void processBrokerHeartbeat(); // TODO: Update params when broker heartbeat ticket is being worked on
 }
