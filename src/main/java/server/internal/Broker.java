@@ -15,10 +15,7 @@ import metadata.Metadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
-import proto.BrokerRegistrationRequest;
-import proto.BrokerRegistrationResult;
-import proto.ControllerServiceGrpc;
-import proto.Message;
+import proto.*;
 import server.internal.storage.Partition;
 
 import java.io.IOException;
@@ -124,14 +121,35 @@ public class Broker implements Controller {
                     Logger.error(t);
                 }
             }, FluxExecutor.getExecutorService());
-
         }
     }
 
     @Override
-    public void unregisterBroker(String brokerId) {
-        if (!isActiveController) {
+    public void unregisterBroker() {
+        if (controllerEndpoint.isEmpty()) {
+            Logger.warn("Cannot unregister broker that is not part of any cluster.");
             return;
+        }
+
+        if (!isActiveController) {
+            UnregisterBrokerRequest request = UnregisterBrokerRequest
+                    .newBuilder()
+                    .setBrokerId(this.brokerId)
+                    .build();
+
+            Logger.info(brokerId + " @ " + host + ":" + port + " SENDING OVER UNREGISTER BROKER REQUEST TO CONTROLLER @ " + controllerEndpoint);
+            ListenableFuture<UnregisterBrokerResult> response = futureStub.unregisterBroker(request);
+            Futures.addCallback(response, new FutureCallback<UnregisterBrokerResult>() {
+                @Override
+                public void onSuccess(UnregisterBrokerResult result) {
+                    Logger.info(result.getAcknowledgement());
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    Logger.error(t);
+                }
+            }, FluxExecutor.getExecutorService());
         }
     }
 
