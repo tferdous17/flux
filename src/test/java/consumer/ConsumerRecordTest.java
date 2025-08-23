@@ -10,7 +10,7 @@ import java.util.Optional;
 
 public class ConsumerRecordTest {
     String topic = "Test Topic";
-    int partition = 1;
+    int partition = 0;
     long offset = 1;
     long timestamp = 1704067200;
     String key = "key";
