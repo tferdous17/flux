@@ -66,7 +66,7 @@ public class PartitionSelector {
                 return roundRobinCounter.getAndIncrement() % numPartitions;
             }
         } else { // Validate partition number
-            if (1 <= partitionNumber && partitionNumber <= numPartitions) {
+            if (0 <= partitionNumber && partitionNumber < numPartitions) {
                 return partitionNumber;
             } else {
                 return roundRobinCounter.getAndIncrement() % numPartitions;
