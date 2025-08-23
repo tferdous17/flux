@@ -33,7 +33,7 @@ public class FluxConsumer<K, V> implements Consumer {
     private boolean isLeader = false;
     private Assignment myAssignment;
 
-    private Collection<String>  subscribedTopics = List.of();
+    private Collection<String> subscribedTopics = List.of();
     private final Map<String, List<Integer>> assignedTopicPartitions = new ConcurrentHashMap<>();
     private volatile Assignment assignment;
     private ScheduledExecutorService hbExec;
@@ -56,8 +56,8 @@ public class FluxConsumer<K, V> implements Consumer {
         String rack = "us-east"; // TODO: Lets keep it EAST for now lol
 
         List<ProtocolMetadata> protocols = List.of(
-                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "range", rack),
-                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "roundrobin", rack)
+                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "range"),
+                ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "roundrobin")
         );
 
         JoinGroupResponse joinResponse = groupCoordinatorClient.joinGroupLoop(
@@ -193,7 +193,7 @@ public class FluxConsumer<K, V> implements Consumer {
         };
     }
 
-    // TODO: Replace with a real metadata RPC (e.g., MetadataService) or cache.
+    // TODO: Look into replacement for InMemoryTopicMetadataRepository.
     private Map<String, Integer> fetchPartitionCounts(Collection<String> topics) {
         Map<String, Integer> counts = new java.util.LinkedHashMap<>();
         for (String t : topics) {
