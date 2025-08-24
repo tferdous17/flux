@@ -1,10 +1,8 @@
 package grpc;
 
+import grpc.services.*;
+import org.tinylog.Logger;
 import server.internal.Broker;
-import grpc.services.ConsumerServiceImpl;
-import grpc.services.CreateTopicsServiceImpl;
-import grpc.services.MetadataServiceImpl;
-import grpc.services.ProducerServiceImpl;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Server;
@@ -17,20 +15,22 @@ public class BrokerServer {
 
     private Server server;
     private final Broker broker;
+    private final ExecutorService executor;
 
     public BrokerServer(Broker broker) {
+        executor = Executors.newFixedThreadPool(6);
         this.broker = broker;
+        this.broker.registerShutdownCallback(() -> stop());
     }
 
     public void start(int port) throws IOException {
-
-        ExecutorService executor = Executors.newFixedThreadPool(6);
         server = Grpc.newServerBuilderForPort(port, InsecureServerCredentials.create())
                 .executor(executor)
                 .addService(new ProducerServiceImpl(this.broker))
                 .addService(new ConsumerServiceImpl(this.broker))
                 .addService(new CreateTopicsServiceImpl(this.broker))
                 .addService(new MetadataServiceImpl(this.broker))
+                .addService(new ControllerServiceImpl(this.broker))
                 .build()
                 .start();
 
@@ -60,7 +60,14 @@ public class BrokerServer {
     public void stop() throws InterruptedException {
         if (server != null) {
             server.shutdown();
+            Logger.info("Server @ %s:%d with broker ID = %s has shut down."
+                    .formatted(broker.getHost(),
+                            broker.getPort(),
+                            broker.getBrokerId()
+                    )
+            );
         }
+        executor.shutdown();
     }
 
     public void blockUntilShutdown() throws InterruptedException {
@@ -68,5 +75,4 @@ public class BrokerServer {
             server.awaitTermination();
         }
     }
-
 }

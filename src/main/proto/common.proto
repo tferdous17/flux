@@ -9,6 +9,7 @@ enum Status {
   PERMANENT_FAILURE = 2;
   FAILURE = 3; // if u want to just be general
   READ_COMPLETION = 4;
+  BROKER_SHUTDOWN_IN_PROGRESS = 5;
 }
 
 // Shared timestamp type
