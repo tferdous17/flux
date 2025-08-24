@@ -10,6 +10,8 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 public class Cluster {
     private String clusterId; // ex: CLUSTER-1
@@ -51,20 +53,40 @@ public class Cluster {
 
     // Fire up each server, ready for requests.
     public void startCluster() {
-        for (Broker b : nodes) {
-            // Start up each broker in its own thread
-            FluxExecutor.getExecutorService().submit(() -> {
-                BrokerServer server = new BrokerServer(b);
-                try {
-                    server.start(b.getPort());
-                    // Once each server is started, it will immediately make a BrokerRegistrationRequest to the controller
+        // Must fire up Controller node first so that it's ready to accept requests immediately
+        CountDownLatch latch = new CountDownLatch(1);
+        FluxExecutor.getExecutorService().submit(() -> {
+            BrokerServer controllerServer = new BrokerServer(controllerNode);
+            try {
+                controllerServer.start(controllerNode.getPort());
+                latch.countDown();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        try {
+            // The thread will block until our latch gets counted down to 0 (which only happens after the controller starts up).
+            // By doing this, we can ensure the controller is ready before sending any requests.
+            if (latch.await(10, TimeUnit.SECONDS)) {
+                for (Broker b : nodes) {
                     if (!b.isActiveController()) {
-                        b.registerBroker();
+                        // Start up each broker in its own thread
+                        FluxExecutor.getExecutorService().submit(() -> {
+                            BrokerServer server = new BrokerServer(b);
+                            try {
+                                server.start(b.getPort());
+                                // Once each server is started, it will immediately make a BrokerRegistrationRequest to the controller
+                                b.registerBroker();
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
                     }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
                 }
-            });
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         }
     }
 }
