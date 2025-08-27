@@ -60,13 +60,13 @@ public class FluxParallelProducerTest {
         // Wait for server to start
         Thread.sleep(2000);
         
-        // Create topic with partitions
-        List<Partition> partitions = new ArrayList<>();
-        for (int i = 0; i < NUM_PARTITIONS; i++) {
-            partitions.add(broker.getPartition(i));
-        }
-        FluxTopic testTopic = new FluxTopic(TEST_TOPIC, partitions, 1);
-        InMemoryTopicMetadataRepository.getInstance().addNewTopic(TEST_TOPIC, testTopic);
+        // Create topic using proper API
+        proto.Topic topic = proto.Topic.newBuilder()
+                .setTopicName(TEST_TOPIC)
+                .setNumPartitions(NUM_PARTITIONS)
+                .setReplicationFactor(1)
+                .build();
+        broker.createTopics(List.of(topic));
     }
     
     @AfterEach
@@ -145,7 +145,7 @@ public class FluxParallelProducerTest {
         // Verify messages were received by the broker
         int totalMessages = 0;
         for (int i = 0; i < NUM_PARTITIONS; i++) {
-            int count = broker.getPartition(i).getCurrentOffset();
+            int count = broker.getPartition(TEST_TOPIC, i).getCurrentOffset();
             totalMessages += count;
             Logger.info("Partition {} received {} messages", i, count);
         }
