@@ -77,4 +77,14 @@ public class InMemoryTopicMetadataRepository implements TopicMetadataRepository 
         int endPartitionId = topicMetadata.get(topicName).getPartitions().getLast().getPartitionId();
         return new IntRange(startPartitionId, endPartitionId);
     }
+    
+    /**
+     * Reset the repository by clearing all topic metadata.
+     * This is primarily for testing purposes.
+     * @return the singleton instance
+     */
+    public static InMemoryTopicMetadataRepository reset() {
+        getInstance().topicMetadata.clear();
+        return getInstance();
+    }
 }

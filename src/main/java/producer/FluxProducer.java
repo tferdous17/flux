@@ -85,7 +85,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
         byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
 
-        buffer.add(new IntermediaryRecord(targetPartition, serializedData));
+        String topicName = record.getTopic();
+        if (topicName == null || topicName.isEmpty()) {
+            throw new IllegalArgumentException("Topic name is required for all records");
+        }
+        buffer.add(new IntermediaryRecord(topicName, targetPartition, serializedData));
         Logger.info("Record added to buffer.");
     }
 
@@ -115,6 +119,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                                 .newBuilder()
                                 .setTargetPartition(r.targetPartition())
                                 .setData(ByteString.copyFrom(r.data()))
+                                .setTopic(r.topicName())
                                 .build()
                         )
                         .toList()
