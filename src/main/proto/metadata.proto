@@ -6,7 +6,8 @@ option java_package = "proto";
 option java_multiple_files = true;
 
 service MetadataService {
-  rpc FetchBrokerMetadata(FetchBrokerMetadataRequest) returns (FetchBrokerMetadataResponse);
+  rpc FetchBrokerMetadata(FetchBrokerMetadataRequest) returns (FetchBrokerMetadataResponse); // probs will phase this out later
+  rpc FetchClusterMetadata(FetchClusterMetadataRequest) returns (FetchClusterMetadataResponse);
 }
 
 message FetchBrokerMetadataRequest {}
@@ -16,4 +17,37 @@ message FetchBrokerMetadataResponse {
   string host = 2;
   uint32 port_number = 3;
   uint32 num_partitions = 4;
+}
+
+message FetchClusterMetadataRequest {}
+
+message ControllerDetails {
+  string controller_id = 1;
+  repeated string follower_node_endpoints = 2;
+  bool is_active = 3;
+}
+
+message BrokerDetails {
+  string broker_id = 1;
+  string host = 2;
+  uint32 port = 3;
+  uint32 num_partitions = 4;
+}
+
+message PartitionDetails {
+  uint32 partition_id = 1;
+  string broker_id = 2;
+}
+
+message TopicDetails {
+  string topic_name = 1;
+  uint32 num_partitions = 2;
+  map<uint32, PartitionDetails> partitions = 3;
+}
+
+message FetchClusterMetadataResponse {
+  ControllerDetails controllerMetadata = 1;
+  map<string, BrokerDetails> brokerMetadata = 2;
+  map<string, TopicDetails> topicDetails = 3;
+  map<uint32,PartitionDetails> partitionDetails = 4;
 }
