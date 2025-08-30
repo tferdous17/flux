@@ -9,7 +9,7 @@ import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import metadata.BrokerMetadataSnapshot;
+import metadata.snapshots.BrokerMetadata;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import metadata.MetadataListener;
@@ -29,8 +29,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
     List<IntermediaryRecord> buffer;
-    private final Metadata metadata;
-    private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
+    private AtomicReference<BrokerMetadata> cachedBrokerMetadata; // read-heavy
 
     public FluxProducer(Properties props, long initialFlushDelay, long flushDelayInterval) {
         // Props will be used to select which broker a producer would like to send to
@@ -49,9 +48,8 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 .getSchedulerService()
                 .scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
 
-        metadata = new Metadata(60);
-        cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
-        metadata.addListener(this);
+        cachedBrokerMetadata = Metadata.getInstance().getBrokerMetadataSnapshot();
+        Metadata.getInstance().addListener(this);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -71,7 +69,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
-        int currentNumBrokerPartitions = cachedBrokerMetadata.get().getNumPartitions();
+        int currentNumBrokerPartitions = cachedBrokerMetadata.get().numPartitions();
 
         // Determine target partition, and then serialize.
         int targetPartition = PartitionSelector.getPartitionNumberForRecord(
@@ -151,7 +149,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     @Override
-    public void onUpdate(AtomicReference<BrokerMetadataSnapshot> newSnapshot) {
+    public void onUpdate(AtomicReference<BrokerMetadata> newSnapshot) {
         // Using an AtomicReference allows us to take advantage of hardware-level instructions, such as compare_and_swap,
         // to ensure thread safety on our metadata cache while avoiding the use of locks
         // (because locking can incur overhead and dampen performance a bit in multithreaded environments)
