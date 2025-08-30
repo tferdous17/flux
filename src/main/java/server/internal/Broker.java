@@ -11,6 +11,7 @@ import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
+import metadata.snapshots.BrokerMetadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
@@ -19,6 +20,7 @@ import server.internal.storage.Partition;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Broker implements Controller {
@@ -34,6 +36,7 @@ public class Broker implements Controller {
     private boolean isActiveController = false;
     private String controllerEndpoint = ""; // "localhost:50051"
     private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
+    private Map<String, BrokerMetadata> cachedFollowerMetadata = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker metadata obj>
     private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
     private ManagedChannel channel;
     private ShutdownCallback shutdownCallback;
@@ -53,6 +56,10 @@ public class Broker implements Controller {
             // All the default partitions that get created upon broker initialization (not part of any topic) will have this topic name
             this.partitions.add(new Partition("DEFAULT", partitionIdCounter++));
         }
+
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::updateBrokerMetadata, 80, 180, TimeUnit.SECONDS);
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
@@ -169,6 +176,33 @@ public class Broker implements Controller {
             shutdownCallback.stop();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    public void updateBrokerMetadata() {
+        // Periodically the broker will send its most up-to-date metadata to the Controller node
+        if (!isActiveController) {
+            UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
+                    .newBuilder()
+                    .setBrokerId(this.brokerId)
+                    .setHost(this.host)
+                    .setPortNumber(this.port)
+                    .setNumPartitions(this.numPartitions)
+                    .build();
+
+            ListenableFuture<UpdateBrokerMetadataResponse> response = futureStub.updateBrokerMetadata(request);
+            Futures.addCallback(response, new FutureCallback<UpdateBrokerMetadataResponse>() {
+
+                @Override
+                public void onSuccess(UpdateBrokerMetadataResponse result) {
+                   Logger.info(result.getAcknowledgement());
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    Logger.error(t);
+                }
+            }, FluxExecutor.getExecutorService());
         }
     }
 
@@ -313,5 +347,9 @@ public class Broker implements Controller {
 
     public Map<String, String> getFollowerNodeEndpoints() {
         return followerNodeEndpoints;
+    }
+
+    public Map<String, BrokerMetadata> getCachedFollowerMetadata() {
+        return cachedFollowerMetadata;
     }
 }
