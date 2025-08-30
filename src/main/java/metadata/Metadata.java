@@ -4,9 +4,12 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import commons.FluxExecutor;
+import commons.FluxTopic;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
+import metadata.snapshots.BrokerMetadata;
+import metadata.snapshots.ClusterSnapshot;
 import org.tinylog.Logger;
 import proto.FetchBrokerMetadataRequest;
 import proto.FetchBrokerMetadataResponse;
@@ -14,6 +17,8 @@ import proto.MetadataServiceGrpc;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,14 +32,16 @@ import java.util.concurrent.atomic.AtomicReference;
 public class Metadata {
     private int refreshIntervalSec;
     private int updateCounter;
-    private AtomicReference<BrokerMetadataSnapshot> currBrokerMetadataSnapshot; // Cached metadata snapshot
     private ManagedChannel channel;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private List<MetadataListener> listeners = new ArrayList<>();
     public static AtomicInteger brokerIdCounter = new AtomicInteger(1);
     public static AtomicInteger clusterIdCounter = new AtomicInteger(1);
 
-    public Metadata(int refreshIntervalSec) {
+    private ConcurrentMap<String, FluxTopic> topicMetadata = new ConcurrentHashMap<>();
+    private AtomicReference<BrokerMetadata> currBrokerMetadataSnapshot; // Cached metadata snapshot
+
+    private Metadata(int refreshIntervalSec) {
         this.refreshIntervalSec = refreshIntervalSec;
         updateCounter = 0;
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
@@ -48,8 +55,16 @@ public class Metadata {
                 .scheduleWithFixedDelay(this::updateMetadata, refreshIntervalSec, refreshIntervalSec, TimeUnit.SECONDS);
     }
 
-    public Metadata() {
+    private Metadata() {
         this(300); // default = 5 minutes
+    }
+
+    private static class SingletonHelper {
+        private static final Metadata INSTANCE = new Metadata();
+    }
+
+    public static Metadata getInstance() {
+        return Metadata.SingletonHelper.INSTANCE;
     }
 
     // Synchronize (mutex) the listeners so there aren't any inconsistencies
@@ -79,18 +94,18 @@ public class Metadata {
     }
 
     // Get the current metadata
-    public AtomicReference<BrokerMetadataSnapshot> getBrokerMetadataSnapshot() {
+    public AtomicReference<BrokerMetadata> getBrokerMetadataSnapshot() {
         return currBrokerMetadataSnapshot;
     }
 
-    private BrokerMetadataSnapshot initialMetadataFetch() {
+    private BrokerMetadata initialMetadataFetch() {
         FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
         try {
             FetchBrokerMetadataResponse response = metadataFutureStub
                     .fetchBrokerMetadata(request)
                     .get();
 
-            return new BrokerMetadataSnapshot(
+            return new BrokerMetadata(
                     response.getBrokerId(),
                     response.getHost(),
                     response.getPortNumber(),
@@ -101,6 +116,7 @@ public class Metadata {
         }
     }
 
+    // Metadata obj will specifically do PULL based metadata fetching from the controller node(s)
     private void updateMetadata() {
         Logger.info("REFRESHING METADATA SNAPSHOT");
 
@@ -110,7 +126,7 @@ public class Metadata {
         Futures.addCallback(future, new FutureCallback<FetchBrokerMetadataResponse>() {
             @Override
             public void onSuccess(FetchBrokerMetadataResponse response) {
-                BrokerMetadataSnapshot newSnapshot = new BrokerMetadataSnapshot(
+                BrokerMetadata newSnapshot = new BrokerMetadata(
                         response.getBrokerId(),
                         response.getHost(),
                         response.getPortNumber(),
