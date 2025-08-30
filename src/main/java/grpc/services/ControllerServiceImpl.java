@@ -1,6 +1,7 @@
 package grpc.services;
 
 import io.grpc.stub.StreamObserver;
+import metadata.snapshots.BrokerMetadata;
 import org.tinylog.Logger;
 import proto.*;
 import server.internal.Broker;
@@ -14,6 +15,36 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
 
     public ControllerServiceImpl(Broker broker) {
         this.broker  = broker;
+    }
+
+    @Override
+    public void updateBrokerMetadata(UpdateBrokerMetadataRequest req, StreamObserver<UpdateBrokerMetadataResponse> responseObserver) {
+        if (!broker.isActiveController()) {
+            return;
+        }
+
+        UpdateBrokerMetadataResponse.Builder response = UpdateBrokerMetadataResponse
+                .newBuilder()
+                .setStatus(Status.SUCCESS);
+
+        // only update metadata for a broker if num partitions change (assuming we won't modify the other fields in this system)
+        if (broker.getCachedFollowerMetadata().containsKey(req.getBrokerId())
+                && broker.getCachedFollowerMetadata().get(req.getBrokerId()).numPartitions() == req.getNumPartitions()) {
+            response.setAcknowledgement("Cached metadata for broker=%s already equal to updated metadata. Cache refresh not needed.".formatted(req.getBrokerId()));
+        } else {
+            response.setAcknowledgement("ACK: Received updated broker metadata from broker=%s. Updating cache".formatted(req.getBrokerId()));
+            broker.getCachedFollowerMetadata().put(req.getBrokerId(),
+                    new BrokerMetadata(
+                            req.getBrokerId(),
+                            req.getHost(),
+                            req.getPortNumber(),
+                            req.getNumPartitions()
+                    )
+            );
+        }
+
+        responseObserver.onNext(response.build());
+        responseObserver.onCompleted();
     }
 
     @Override
@@ -38,6 +69,15 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
 
         broker.getFollowerNodeEndpoints()
                 .put(req.getBrokerId(), "%s:%d".formatted(req.getBrokerHost(), req.getBrokerPort()));
+
+        broker.getCachedFollowerMetadata().put(req.getBrokerId(),
+                new BrokerMetadata(
+                        req.getBrokerId(),
+                        req.getBrokerHost(),
+                        req.getBrokerPort(),
+                        0 // default num partitions for a newly registered broker (for now)
+                )
+        );
 
         Logger.info("Current follower nodes: " + broker.getFollowerNodeEndpoints().toString());
 
