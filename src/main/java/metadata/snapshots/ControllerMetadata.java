@@ -1,8 +1,19 @@
 package metadata.snapshots;
 
-import java.util.Set;
+import java.util.List;
 
+/**
+ * Represents an immutable snapshot of the controller node's metadata
+ */
 public record ControllerMetadata(String controllerId,
-                                 Set<String> followerNodeEndpoints,
+                                 List<String> followerNodeEndpoints,
                                  boolean isActive) {
+
+    public static ControllerMetadata from(proto.ControllerDetails details) {
+        return new ControllerMetadata(
+                details.getControllerId(),
+                details.getFollowerNodeEndpointsList().stream().toList(),
+                details.getIsActive()
+        );
+    }
 }
