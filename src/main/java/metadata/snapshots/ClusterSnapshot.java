@@ -7,7 +7,6 @@ import java.util.Map;
  */
 public record ClusterSnapshot(ControllerMetadata controllerMetadata,
                               Map<String, BrokerMetadata> brokers, // <broker id, metadata>
-                              Map<String, TopicMetadata> topics, // <topic name, metadata>
-                              Map<Integer, PartitionMetadata> partitions) { // <partition id, metadata>
+                              Map<String, TopicMetadata> topics) { // <topic name, metadata>
 }
 
