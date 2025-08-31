@@ -2,9 +2,12 @@ package grpc.services;
 
 import io.grpc.stub.StreamObserver;
 import metadata.snapshots.BrokerMetadata;
+import metadata.snapshots.PartitionMetadata;
 import org.tinylog.Logger;
 import proto.*;
 import server.internal.Broker;
+
+import java.util.HashMap;
 
 /**
  * Below methods are handled by the Controller node specifically.
@@ -17,6 +20,7 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
         this.broker  = broker;
     }
 
+    // Each broker will send an UpdateBrokerMetadata request to the controller, giving it its most up-to-date metadata.
     @Override
     public void updateBrokerMetadata(UpdateBrokerMetadataRequest req, StreamObserver<UpdateBrokerMetadataResponse> responseObserver) {
         if (!broker.isActiveController()) {
@@ -33,12 +37,14 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
             response.setAcknowledgement("Cached metadata for broker=%s already equal to updated metadata. Cache refresh not needed.".formatted(req.getBrokerId()));
         } else {
             response.setAcknowledgement("ACK: Received updated broker metadata from broker=%s. Updating cache".formatted(req.getBrokerId()));
-            broker.getCachedFollowerMetadata().put(req.getBrokerId(),
+            broker.getCachedFollowerMetadata().put(
+                    req.getBrokerId(),
                     new BrokerMetadata(
                             req.getBrokerId(),
                             req.getHost(),
                             req.getPortNumber(),
-                            req.getNumPartitions()
+                            req.getNumPartitions(),
+                            PartitionMetadata.fromMap(req.getPartitionDetailsMap())
                     )
             );
         }
@@ -70,12 +76,15 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
         broker.getFollowerNodeEndpoints()
                 .put(req.getBrokerId(), "%s:%d".formatted(req.getBrokerHost(), req.getBrokerPort()));
 
-        broker.getCachedFollowerMetadata().put(req.getBrokerId(),
+        // Newly created & registered brokers will have 0 partitions by default
+        broker.getCachedFollowerMetadata().put(
+                req.getBrokerId(),
                 new BrokerMetadata(
                         req.getBrokerId(),
                         req.getBrokerHost(),
                         req.getBrokerPort(),
-                        0 // default num partitions for a newly registered broker (for now)
+                        0,
+                        new HashMap<>()
                 )
         );
 
