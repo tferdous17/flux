@@ -32,22 +32,17 @@ message BrokerDetails {
   string host = 2;
   uint32 port = 3;
   uint32 num_partitions = 4;
-}
-
-message PartitionDetails {
-  uint32 partition_id = 1;
-  string broker_id = 2;
+  map<uint32, PartitionDetails> partition_details = 5;
 }
 
 message TopicDetails {
   string topic_name = 1;
   uint32 num_partitions = 2;
-  map<uint32, PartitionDetails> partitions = 3;
+  map<uint32, PartitionDetails> partition_details = 3;
 }
 
 message FetchClusterMetadataResponse {
-  ControllerDetails controllerMetadata = 1;
-  map<string, BrokerDetails> brokerMetadata = 2;
-  map<string, TopicDetails> topicDetails = 3;
-  map<uint32,PartitionDetails> partitionDetails = 4;
+  ControllerDetails controller_details = 1;
+  map<string, BrokerDetails> broker_details = 2;
+  map<string, TopicDetails> topic_details = 3;
 }
