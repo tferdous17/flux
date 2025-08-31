@@ -16,6 +16,7 @@ message UpdateBrokerMetadataRequest {
   string host = 2;
   uint32 port_number = 3;
   uint32 num_partitions = 4;
+  map<uint32, PartitionDetails> partition_details = 5;
 }
 
 message UpdateBrokerMetadataResponse {
