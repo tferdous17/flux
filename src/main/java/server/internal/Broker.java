@@ -12,6 +12,7 @@ import io.grpc.ManagedChannel;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import metadata.snapshots.BrokerMetadata;
+import metadata.snapshots.PartitionMetadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
@@ -34,6 +35,7 @@ public class Broker implements Controller {
     private final PartitionWriteManager writeManager;
 
     private boolean isActiveController = false;
+    private String clusterId = ""; // that this controller belongs to
     private String controllerEndpoint = ""; // "localhost:50051"
     private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
     private Map<String, BrokerMetadata> cachedFollowerMetadata = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker metadata obj>
@@ -182,14 +184,24 @@ public class Broker implements Controller {
     public void updateBrokerMetadata() {
         // Periodically the broker will send its most up-to-date metadata to the Controller node
         if (!isActiveController) {
+            Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
+            partitions.forEach(p -> {
+                partitionMetadataMap.put(
+                        p.getPartitionId(),
+                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
+                );
+            });
+
             UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
                     .newBuilder()
                     .setBrokerId(this.brokerId)
                     .setHost(this.host)
                     .setPortNumber(this.port)
                     .setNumPartitions(this.numPartitions)
+                    .putAllPartitionDetails(PartitionMetadata.toDetailsMapProto(partitionMetadataMap))
                     .build();
 
+            // Send off request to controller and await response
             ListenableFuture<UpdateBrokerMetadataResponse> response = futureStub.updateBrokerMetadata(request);
             Futures.addCallback(response, new FutureCallback<UpdateBrokerMetadataResponse>() {
 
@@ -286,8 +298,6 @@ public class Broker implements Controller {
         return targetPartition.getRecordAtOffset(startingOffset);
     }
 
-
-
     public String getBrokerId() {
         return brokerId;
     }
@@ -343,6 +353,10 @@ public class Broker implements Controller {
 
     public String getControllerEndpoint() {
         return this.controllerEndpoint;
+    }
+
+    public void setClusterId(String clusterId) {
+        this.clusterId = clusterId;
     }
 
     public Map<String, String> getFollowerNodeEndpoints() {
