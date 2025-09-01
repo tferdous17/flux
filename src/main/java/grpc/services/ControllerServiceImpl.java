@@ -32,13 +32,14 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
                 .setStatus(Status.SUCCESS);
 
         // only update metadata for a broker if num partitions change (assuming we won't modify the other fields in this system)
-        if (broker.getCachedFollowerMetadata().containsKey(req.getBrokerId())
+        if (broker.getCachedFollowerMetadata().containsKey("%s:%d".formatted(req.getHost(), req.getPortNumber()))
                 && broker.getCachedFollowerMetadata().get(req.getBrokerId()).numPartitions() == req.getNumPartitions()) {
             response.setAcknowledgement("Cached metadata for broker=%s already equal to updated metadata. Cache refresh not needed.".formatted(req.getBrokerId()));
         } else {
             response.setAcknowledgement("ACK: Received updated broker metadata from broker=%s. Updating cache".formatted(req.getBrokerId()));
+            // <broker addr, BrokerMetadata>
             broker.getCachedFollowerMetadata().put(
-                    req.getBrokerId(),
+                    "%s:%d".formatted(req.getHost(), req.getPortNumber()),
                     new BrokerMetadata(
                             req.getBrokerId(),
                             req.getHost(),
@@ -78,7 +79,7 @@ public class ControllerServiceImpl extends ControllerServiceGrpc.ControllerServi
 
         // Newly created & registered brokers will have 0 partitions by default
         broker.getCachedFollowerMetadata().put(
-                req.getBrokerId(),
+                "%s:%d".formatted(req.getBrokerHost(), req.getBrokerPort()),
                 new BrokerMetadata(
                         req.getBrokerId(),
                         req.getBrokerHost(),
