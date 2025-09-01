@@ -48,7 +48,26 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
                 .build();
         response.setControllerDetails(controllerDetails);
 
-        // For each broker in the cluster, create a BrokerDetails object for it and put it in the map w/ its brokerID as key
+        // We must also build out the Controller's broker metadata as well
+        response.putBrokerDetails(
+                "%s:%d".formatted(broker.getHost(), broker.getPort()),
+                BrokerDetails
+                        .newBuilder()
+                        .setBrokerId(this.broker.getBrokerId())
+                        .setHost(this.broker.getHost())
+                        .setPort(this.broker.getPort())
+                        .setNumPartitions(this.broker.getNumPartitions())
+                        .putAllPartitionDetails(PartitionMetadata
+                                .toDetailsMapProto(this.broker
+                                        .getControllerMetadata()
+                                        .get()
+                                        .partitionMetadata()
+                                )
+                        )
+                        .build()
+        );
+
+        // For each broker in the cluster, create a BrokerDetails object for it and put it in the map w/ its broker addr as key
         for (Map.Entry<String, BrokerMetadata> entry : broker.getCachedFollowerMetadata().entrySet()) {
             BrokerDetails details = BrokerDetails
                     .newBuilder()
