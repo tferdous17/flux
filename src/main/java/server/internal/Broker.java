@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Broker implements Controller {
     private String brokerId;
@@ -38,6 +39,7 @@ public class Broker implements Controller {
     private String clusterId = ""; // that this controller belongs to
     private String controllerEndpoint = ""; // "localhost:50051"
     private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
+    private AtomicReference<BrokerMetadata> controllerMetadata = new AtomicReference<>();
     private Map<String, BrokerMetadata> cachedFollowerMetadata = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker metadata obj>
     private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
     private ManagedChannel channel;
@@ -181,17 +183,39 @@ public class Broker implements Controller {
         }
     }
 
+    // Initializes the controller's metadata before other brokers in the cluster
+    public void initControllerBrokerMetadata() {
+        if (!isActiveController) {
+            return;
+        }
+
+        Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
+
+        this.controllerMetadata.set(new BrokerMetadata(
+                this.brokerId,
+                this.host,
+                this.port,
+                this.numPartitions,
+                partitionMetadataMap
+        ));
+    }
+
     public void updateBrokerMetadata() {
         // Periodically the broker will send its most up-to-date metadata to the Controller node
+        Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
         if (!isActiveController) {
-            Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
-            partitions.forEach(p -> {
-                partitionMetadataMap.put(
-                        p.getPartitionId(),
-                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
-                );
-            });
-
             UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
                     .newBuilder()
                     .setBrokerId(this.brokerId)
@@ -215,6 +239,15 @@ public class Broker implements Controller {
                     Logger.error(t);
                 }
             }, FluxExecutor.getExecutorService());
+        } else {
+            // Keep controller's metadata up-to-date as well
+            this.controllerMetadata.set(new BrokerMetadata(
+                    this.brokerId,
+                    this.host,
+                    this.port,
+                    this.numPartitions,
+                    partitionMetadataMap
+            ));
         }
     }
 
@@ -365,5 +398,9 @@ public class Broker implements Controller {
 
     public Map<String, BrokerMetadata> getCachedFollowerMetadata() {
         return cachedFollowerMetadata;
+    }
+
+    public AtomicReference<BrokerMetadata> getControllerMetadata() {
+        return controllerMetadata;
     }
 }
