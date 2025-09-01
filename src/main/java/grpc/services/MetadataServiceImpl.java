@@ -40,7 +40,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
         FetchClusterMetadataResponse.Builder response = FetchClusterMetadataResponse.newBuilder();
 
         // Build ControllerDetails
-        ControllerDetails controllerDetails = proto.ControllerDetails
+        proto.ControllerDetails controllerDetails = proto.ControllerDetails
                 .newBuilder()
                 .setControllerId(broker.getBrokerId())
                 .addAllFollowerNodeEndpoints(broker.getFollowerNodeEndpoints().values())
@@ -51,7 +51,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
         // We must also build out the Controller's broker metadata as well
         response.putBrokerDetails(
                 "%s:%d".formatted(broker.getHost(), broker.getPort()),
-                BrokerDetails
+                proto.BrokerDetails
                         .newBuilder()
                         .setBrokerId(this.broker.getBrokerId())
                         .setHost(this.broker.getHost())
@@ -69,7 +69,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
 
         // For each broker in the cluster, create a BrokerDetails object for it and put it in the map w/ its broker addr as key
         for (Map.Entry<String, BrokerMetadata> entry : broker.getCachedFollowerMetadata().entrySet()) {
-            BrokerDetails details = BrokerDetails
+            proto.BrokerDetails details = proto.BrokerDetails
                     .newBuilder()
                     .setBrokerId(entry.getValue().brokerId())
                     .setHost(entry.getValue().host())
