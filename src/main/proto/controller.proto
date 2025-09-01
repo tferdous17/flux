@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+import "common.proto";
+
+option java_package = "proto";
+option java_multiple_files = true;
+
+service ControllerService {
+  rpc RegisterBroker(BrokerRegistrationRequest) returns (BrokerRegistrationResult);
+  rpc DecommissionBroker(DecommissionBrokerRequest) returns (DecommissionBrokerResult);
+}
+
+message BrokerRegistrationRequest {
+  string broker_id = 1;
+  string broker_host = 2;
+  uint32 broker_port = 3;
+}
+
+message BrokerRegistrationResult {
+  string acknowledgement = 1;
+  Status status = 2;
+}
+
+message DecommissionBrokerRequest {
+  string broker_id = 1;
+  // TODO: Might need more fields here, but wont know until later tickets get implemented first
+}
+
+message DecommissionBrokerResult {
+  string acknowledgement = 1;
+  Status status = 2;
+}

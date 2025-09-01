@@ -23,13 +23,13 @@ import java.util.*;
  */
 public class FluxAdminClient implements Admin {
     private static FluxAdminClient instance = null;
-    private Set<InetSocketAddress> bootstrapServerAddrs; // addresses of initial brokers (localhost:50051..etc)
+    private List<InetSocketAddress> bootstrapServerAddrs; // addresses of initial brokers (localhost:50051..etc)
 
     private final CreateTopicsServiceGrpc.CreateTopicsServiceBlockingStub blockingStub;
     private ManagedChannel channel; // channel to the broker server
 
     private FluxAdminClient(Properties props) {
-        bootstrapServerAddrs = new HashSet<>();
+        bootstrapServerAddrs = new ArrayList<>();
         if (props.containsKey("bootstrap.servers")) {
             String[] addrs = props.getProperty("bootstrap.servers").split(",");
             for (String addr : addrs) {
@@ -105,14 +105,20 @@ public class FluxAdminClient implements Admin {
 
     private void initAndStartBootstrapCluster() throws IOException {
         // Uses the bootstrap server addresses we were given
-        Cluster cluster = new Cluster("CLUSTER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()));
-        cluster.bootstrapCluster(this.bootstrapServerAddrs);
-        cluster.startCluster();
+        Cluster cluster = new Cluster("CLUSTER-%d".formatted(Metadata.clusterIdCounter.getAndIncrement()));
+        if (!bootstrapServerAddrs.isEmpty()) {
+            cluster.bootstrapCluster(this.bootstrapServerAddrs);
+            cluster.startCluster();
+        } else {
+            Logger.warn("Set of bootstrap servers is empty. Cannot start cluster.");
+        }
     }
 
-    public void initAndStartNewCluster(Set<InetSocketAddress> bootstrapBrokerServerAddrs) throws IOException {
-        Cluster cluster = new Cluster("CLUSTER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()));
-        cluster.bootstrapCluster(bootstrapBrokerServerAddrs);
-        cluster.startCluster();
+    public void initAndStartNewCluster(List<InetSocketAddress> bootstrapBrokerServerAddrs) throws IOException {
+        Cluster cluster = new Cluster("CLUSTER-%d".formatted(Metadata.clusterIdCounter.getAndIncrement()));
+        if (!bootstrapBrokerServerAddrs.isEmpty()) {
+            cluster.bootstrapCluster(bootstrapBrokerServerAddrs);
+            cluster.startCluster();
+        }
     }
 }
