@@ -1,5 +1,6 @@
 package broker;
 
+import grpc.BrokerServer;
 import org.junit.jupiter.api.Test;
 import producer.RecordBatch;
 import server.internal.Broker;
@@ -31,5 +32,13 @@ public class BrokerTest {
         batch.append(new byte[]{90, 3, 2, 0, 102, 12, 34, 123, 93});
 
         broker.produceMessages("test-topic", batch);
+    }
+
+    @Test
+    public void brokerShutdownTest() throws IOException {
+        Broker broker = new Broker("broker-1", "localhost", 8080);
+        BrokerServer server = new BrokerServer(broker);
+        server.start(8080);
+        broker.triggerManualBrokerShutdown();
     }
 }
