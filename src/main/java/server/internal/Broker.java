@@ -151,6 +151,19 @@ public class Broker {
         return lastRecordOffset;
     }
 
+    // TODO: Finish consumer infrastructure
+    public Message consumeMessage(int startingOffset) throws IOException {
+        // Default to partition 0 for backward compatibility
+        // For now, assume the first available topic since consumer context isn't fully implemented
+        if (topicPartitions.isEmpty()) {
+            throw new IllegalStateException("No topics available - consumer must subscribe to a topic first");
+        }
+        
+        String firstTopicName = topicPartitions.keySet().iterator().next();
+        // TODO: Replace placeholder partitionID - using partition 0 as default
+        return consumeMessage(firstTopicName, 0, startingOffset);
+    }
+
     /**
      * Consume a message from a specific topic partition at the given offset
      */
