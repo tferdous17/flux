@@ -19,6 +19,7 @@ import proto.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -28,7 +29,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
-    List<IntermediaryRecord> buffer;
+    private RecordAccumulator recordAccumulator;
     private final Metadata metadata;
     private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
 
@@ -43,7 +44,6 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         channel = Grpc.newChannelBuilder(bootstrapServer, InsecureChannelCredentials.create()).build();
         publishToBrokerFutureStub = PublishToBrokerGrpc.newFutureStub(channel);
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
-        buffer = new ArrayList<>();
 
         FluxExecutor
                 .getSchedulerService()
@@ -52,6 +52,10 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         metadata = new Metadata(60);
         cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
         metadata.addListener(this);
+        
+        // Initialize RecordAccumulator with the current number of partitions
+        int numPartitions = cachedBrokerMetadata.get().getNumPartitions();
+        recordAccumulator = new RecordAccumulator(numPartitions);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -89,8 +93,14 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         if (topicName == null || topicName.isEmpty()) {
             throw new IllegalArgumentException("Topic name is required for all records");
         }
-        buffer.add(new IntermediaryRecord(topicName, targetPartition, serializedData));
-        Logger.info("Record added to buffer.");
+        // Use RecordAccumulator to append the serialized record
+        try {
+            recordAccumulator.append(serializedData);
+            Logger.info("Record appended to RecordAccumulator for partition " + targetPartition);
+        } catch (IOException e) {
+            Logger.error("Failed to append record to RecordAccumulator: " + e.getMessage(), e);
+            throw e;
+        }
     }
 
     // NOTE: ONLY USE THIS FOR TESTING
@@ -99,27 +109,27 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     private void flushBuffer() {
-        if (buffer.isEmpty()) {
+        // Get all batches from RecordAccumulator
+        Map<Integer, RecordBatch> batchesToSend = recordAccumulator.flush();
+        
+        if (batchesToSend.isEmpty()) {
             return;
         }
 
         Logger.info("COMMENCING BUFFER FLUSH.");
 
-        // Create deep copy/snapshot of the buffer so we can send it in our request and clear the actual buffer
-        // This allows us to continue appending to the buffer w/o messing with the data inside the publish request
-        List<IntermediaryRecord> bufferSnapshot = new ArrayList<>(buffer);
-        buffer.clear();
+        // Convert batches to IntermediaryRecord format for gRPC
+        List<IntermediaryRecord> recordsToSend = recordAccumulator.convertBatchesToIntermediaryRecords(batchesToSend);
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                 .newBuilder()
                 .addAllRecords(
-                        bufferSnapshot
+                        recordsToSend
                         .stream()
                         .map(r -> proto.Record
                                 .newBuilder()
                                 .setTargetPartition(r.targetPartition())
                                 .setData(ByteString.copyFrom(r.data()))
-                                .setTopic(r.topicName())
                                 .build()
                         )
                         .toList()

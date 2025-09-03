@@ -18,11 +18,11 @@ public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImpl
         FetchMessageResponse.Builder responseBuilder = FetchMessageResponse.newBuilder();
         int nextOffset = req.getStartingOffset() + 1;
         try {
-            String topic = req.getTopic();
-            if (topic == null || topic.isEmpty()) {
-                throw new IllegalArgumentException("Topic name is required");
-            }
-            Message msg = this.broker.consumeMessage(topic, req.getPartitionId(), req.getStartingOffset());
+            // Note: Topic is determined by the broker/partition, not from the request
+            // The FetchMessageRequest only contains partition_id and starting_offset
+            // TODO: This is a design issue - consumer should specify which topic to consume from
+            String defaultTopic = "default"; // Temporary fix
+            Message msg = this.broker.consumeMessage(defaultTopic, req.getPartitionId(), req.getStartingOffset());
             if (msg != null) {
                 responseBuilder
                         .setMessage(msg)

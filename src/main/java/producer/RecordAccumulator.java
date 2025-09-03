@@ -5,6 +5,9 @@ import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -32,9 +35,58 @@ public class RecordAccumulator {
         return new RecordBatch(batchSize);
     }
 
-    public boolean flush() {
-        Logger.info("Flushing the batch to the broker (Stubbed out)");
-        return true;
+    /**
+     * Flush all current batches and return them for sending
+     * @return Map of partition to RecordBatch for all non-empty batches
+     */
+    public Map<Integer, RecordBatch> flush() {
+        if (partitionBatches.isEmpty()) {
+            Logger.info("No batches to flush");
+            return new HashMap<>();
+        }
+        
+        Logger.info("Flushing " + partitionBatches.size() + " partition batches");
+        
+        // Create a copy of current batches to return
+        Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
+        
+        // Clear the current batches since they're being flushed
+        partitionBatches.clear();
+        
+        return batchesToFlush;
+    }
+
+    /**
+     * Convert RecordBatch map to list of IntermediaryRecords for gRPC sending
+     * @param batchMap Map of partition to RecordBatch
+     * @return List of IntermediaryRecord ready for gRPC
+     */
+    public List<IntermediaryRecord> convertBatchesToIntermediaryRecords(Map<Integer, RecordBatch> batchMap) {
+        List<IntermediaryRecord> records = new ArrayList<>();
+        
+        for (Map.Entry<Integer, RecordBatch> entry : batchMap.entrySet()) {
+            int partition = entry.getKey();
+            RecordBatch batch = entry.getValue();
+            
+            // TODO: For now, we need to extract individual records from the batch
+            // This is a temporary solution until we implement proper batch serialization
+            ByteBuffer buffer = batch.getBatchBuffer();
+            buffer.rewind(); // Reset position to read from beginning
+            
+            // For simplicity, we'll try to deserialize each record
+            // Note: This is not ideal and should be improved in future iterations
+            byte[] batchData = new byte[batch.getCurrBatchSizeInBytes()];
+            buffer.get(batchData);
+            
+            // For now, treat the entire batch as one record per partition
+            // TODO: Improve this to handle individual records within a batch
+            ProducerRecord<String, String> tempRecord = ProducerRecordCodec.deserialize(
+                batchData, String.class, String.class);
+            
+            records.add(new IntermediaryRecord(tempRecord.getTopic(), partition, batchData));
+        }
+        
+        return records;
     }
 
     // TODO: There is a chance for refactoring here. Since we're deserializing a bit prematurely here, we can just
@@ -76,8 +128,8 @@ public class RecordAccumulator {
         try {
             if (currentBatch == null || !currentBatch.append(serializedRecord)) {
                 if (currentBatch != null) { // Case 1B - batch is full
-                    Logger.info("Batch for partition " + partition + " is full. Flushing current batch.");
-                    flush(); // TODO: Missing implementation
+                    Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
+                    // Note: We don't auto-flush here, let the caller decide when to flush
                 }
                 Logger.info("Creating a new batch for partition " + partition + ".");
                 currentBatch = createBatch(partition, baseOffset);
