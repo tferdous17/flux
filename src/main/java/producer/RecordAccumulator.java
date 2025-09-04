@@ -5,7 +5,6 @@ import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -13,19 +12,25 @@ import java.util.HashMap;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
+    static private final long DEFAULT_LINGER_MS = 100; // 100ms default linger time
 
     private final int batchSize;
+    private final long lingerMs;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
+    private final Object batchLock = new Object(); // For thread safety
 
     public RecordAccumulator(int numPartitions) {
-        this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
-        this.partitionBatches = new HashMap<>();
-        this.numPartitions = numPartitions;
+        this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS);
     }
 
     public RecordAccumulator(int batchSize, int numPartitions) {
+        this(batchSize, numPartitions, DEFAULT_LINGER_MS);
+    }
+
+    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs) {
         this.batchSize = validateBatchSize(batchSize);
+        this.lingerMs = lingerMs;
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
     }
@@ -36,24 +41,67 @@ public class RecordAccumulator {
     }
 
     /**
+     * Get batches that are ready for sending based on size or time
+     * @return Map of partition to RecordBatch for ready batches
+     */
+    public Map<Integer, RecordBatch> getReadyBatches() {
+        synchronized (batchLock) {
+            Map<Integer, RecordBatch> readyBatches = new HashMap<>();
+            
+            for (Map.Entry<Integer, RecordBatch> entry : partitionBatches.entrySet()) {
+                int partition = entry.getKey();
+                RecordBatch batch = entry.getValue();
+                
+                if (batch != null && isBatchReady(batch)) {
+                    readyBatches.put(partition, batch);
+                }
+            }
+            
+            // Remove ready batches from accumulator
+            for (Integer partition : readyBatches.keySet()) {
+                partitionBatches.remove(partition);
+            }
+            
+            if (!readyBatches.isEmpty()) {
+                Logger.info("Found " + readyBatches.size() + " ready batches");
+            }
+            
+            return readyBatches;
+        }
+    }
+
+    /**
      * Flush all current batches and return them for sending
      * @return Map of partition to RecordBatch for all non-empty batches
      */
     public Map<Integer, RecordBatch> flush() {
-        if (partitionBatches.isEmpty()) {
-            Logger.info("No batches to flush");
-            return new HashMap<>();
+        synchronized (batchLock) {
+            if (partitionBatches.isEmpty()) {
+                Logger.info("No batches to flush");
+                return new HashMap<>();
+            }
+            
+            Logger.info("Flushing " + partitionBatches.size() + " partition batches");
+            
+            // Create a copy of current batches to return
+            Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
+            
+            // Clear the current batches since they're being flushed
+            partitionBatches.clear();
+            
+            return batchesToFlush;
         }
-        
-        Logger.info("Flushing " + partitionBatches.size() + " partition batches");
-        
-        // Create a copy of current batches to return
-        Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
-        
-        // Clear the current batches since they're being flushed
-        partitionBatches.clear();
-        
-        return batchesToFlush;
+    }
+
+    /**
+     * Check if a batch is ready for sending
+     */
+    private boolean isBatchReady(RecordBatch batch) {
+        // Batch is ready if:
+        // 1. It has records AND (batch is 90% full OR has expired)
+        return batch.getRecordCount() > 0 && 
+               (batch.getCurrBatchSizeInBytes() >= (batchSize * 0.9) || 
+                batch.isExpired(lingerMs));
     }
 
     /**
@@ -65,25 +113,10 @@ public class RecordAccumulator {
         List<IntermediaryRecord> records = new ArrayList<>();
         
         for (Map.Entry<Integer, RecordBatch> entry : batchMap.entrySet()) {
-            int partition = entry.getKey();
             RecordBatch batch = entry.getValue();
             
-            // TODO: For now, we need to extract individual records from the batch
-            // This is a temporary solution until we implement proper batch serialization
-            ByteBuffer buffer = batch.getBatchBuffer();
-            buffer.rewind(); // Reset position to read from beginning
-            
-            // For simplicity, we'll try to deserialize each record
-            // Note: This is not ideal and should be improved in future iterations
-            byte[] batchData = new byte[batch.getCurrBatchSizeInBytes()];
-            buffer.get(batchData);
-            
-            // For now, treat the entire batch as one record per partition
-            // TODO: Improve this to handle individual records within a batch
-            ProducerRecord<String, String> tempRecord = ProducerRecordCodec.deserialize(
-                batchData, String.class, String.class);
-            
-            records.add(new IntermediaryRecord(tempRecord.getTopic(), partition, batchData));
+            // Use the new getIntermediaryRecords method from RecordBatch
+            records.addAll(batch.getIntermediaryRecords());
         }
         
         return records;
@@ -110,6 +143,16 @@ public class RecordAccumulator {
         );
     }
 
+    /**
+     * Extract topic information from a serialized ProducerRecord
+     */
+    private String extractTopicFromRecord(byte[] serializedRecord) {
+        // Deserialize to get the ProducerRecord and extract topic info
+        ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
+                serializedRecord, String.class, String.class);
+        return record.getTopic();
+    }
+
     /*
     1. Check for both cases:
         1A) First-time batch exists -> currentBatch == null
@@ -119,30 +162,33 @@ public class RecordAccumulator {
     4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
     */
     public void append(byte[] serializedRecord) throws IOException {
-        // Extract partition from the serialized record
+        // Extract partition and topic from the serialized record
         int partition = extractPartitionFromRecord(serializedRecord);
-        RecordBatch currentBatch = partitionBatches.get(partition);
+        String topicName = extractTopicFromRecord(serializedRecord);
         
-        int baseOffset = 0; // TODO: Should be determined by broker/partition
-        
-        try {
-            if (currentBatch == null || !currentBatch.append(serializedRecord)) {
-                if (currentBatch != null) { // Case 1B - batch is full
-                    Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
-                    // Note: We don't auto-flush here, let the caller decide when to flush
+        synchronized (batchLock) {
+            RecordBatch currentBatch = partitionBatches.get(partition);
+            int baseOffset = 0; // TODO: Should be determined by broker/partition
+            
+            try {
+                if (currentBatch == null || !currentBatch.append(serializedRecord, topicName, partition)) {
+                    if (currentBatch != null) { // Case 1B - batch is full
+                        Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
+                        // Note: We don't auto-flush here, let the caller decide when to flush
+                    }
+                    Logger.info("Creating a new batch for partition " + partition + ".");
+                    currentBatch = createBatch(partition, baseOffset);
+                    partitionBatches.put(partition, currentBatch);
+                    
+                    if (!currentBatch.append(serializedRecord, topicName, partition)) {
+                        throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
+                    }
                 }
-                Logger.info("Creating a new batch for partition " + partition + ".");
-                currentBatch = createBatch(partition, baseOffset);
-                partitionBatches.put(partition, currentBatch);
-                
-                if (!currentBatch.append(serializedRecord)) {
-                    throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
-                }
+                Logger.info("Record appended successfully to partition " + partition + ".");
+            } catch (Exception e) {
+                Logger.error("Failed to append record: " + e.getMessage(), e);
+                throw e;
             }
-            Logger.info("Record appended successfully to partition " + partition + ".");
-        } catch (Exception e) {
-            Logger.error("Failed to append record: " + e.getMessage(), e);
-            throw e;
         }
     }
 

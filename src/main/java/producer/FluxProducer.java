@@ -32,6 +32,8 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private RecordAccumulator recordAccumulator;
     private final Metadata metadata;
     private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
+    private final int maxRetries;
+    private final long retryBackoffMs;
 
     public FluxProducer(Properties props, long initialFlushDelay, long flushDelayInterval) {
         // Props will be used to select which broker a producer would like to send to
@@ -53,9 +55,17 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
         metadata.addListener(this);
         
-        // Initialize RecordAccumulator with the current number of partitions
+        // Initialize configuration from properties
         int numPartitions = cachedBrokerMetadata.get().getNumPartitions();
-        recordAccumulator = new RecordAccumulator(numPartitions);
+        int batchSize = Integer.parseInt(props.getProperty("batch.size", "10240")); // 10KB default
+        long lingerMs = Long.parseLong(props.getProperty("linger.ms", "100")); // 100ms default
+        maxRetries = Integer.parseInt(props.getProperty("retries", "3")); // 3 retries default
+        retryBackoffMs = Long.parseLong(props.getProperty("retry.backoff.ms", "1000")); // 1s backoff default
+        
+        recordAccumulator = new RecordAccumulator(batchSize, numPartitions, lingerMs);
+        
+        Logger.info("FluxProducer initialized - Partitions: {}, BatchSize: {}KB, LingerMs: {}ms, MaxRetries: {}, RetryBackoff: {}ms", 
+                   numPartitions, batchSize / 1024, lingerMs, maxRetries, retryBackoffMs);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -97,6 +107,9 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         try {
             recordAccumulator.append(serializedData);
             Logger.info("Record appended to RecordAccumulator for partition " + targetPartition);
+            
+            // Check if we have any ready batches and send them
+            checkAndSendReadyBatches();
         } catch (IOException e) {
             Logger.error("Failed to append record to RecordAccumulator: " + e.getMessage(), e);
             throw e;
@@ -108,6 +121,24 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         flushBuffer();
     }
 
+    // NOTE: ONLY USE THIS FOR TESTING
+    public RecordAccumulator getAccumulator() {
+        return recordAccumulator;
+    }
+
+    /**
+     * Check for ready batches and send them if any exist
+     */
+    private void checkAndSendReadyBatches() {
+        Map<Integer, RecordBatch> readyBatches = recordAccumulator.getReadyBatches();
+        if (!readyBatches.isEmpty()) {
+            sendBatches(readyBatches, "READY BATCH SEND");
+        }
+    }
+
+    /**
+     * Flush all batches (scheduled or forced flush)
+     */
     private void flushBuffer() {
         // Get all batches from RecordAccumulator
         Map<Integer, RecordBatch> batchesToSend = recordAccumulator.flush();
@@ -116,10 +147,22 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             return;
         }
 
-        Logger.info("COMMENCING BUFFER FLUSH.");
+        sendBatches(batchesToSend, "SCHEDULED BUFFER FLUSH");
+    }
+
+    /**
+     * Send batches to broker via gRPC
+     */
+    private void sendBatches(Map<Integer, RecordBatch> batchesToSend, String operation) {
+        Logger.info("COMMENCING " + operation + " - {} batches", batchesToSend.size());
 
         // Convert batches to IntermediaryRecord format for gRPC
         List<IntermediaryRecord> recordsToSend = recordAccumulator.convertBatchesToIntermediaryRecords(batchesToSend);
+
+        if (recordsToSend.isEmpty()) {
+            Logger.info("No records to send in batches");
+            return;
+        }
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                 .newBuilder()
@@ -136,25 +179,47 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 )
                 .build();
 
-        System.out.println("SIZE OF REQ: " + request.getSerializedSize());
+        Logger.info("Sending {} records in {} batches (size: {} bytes)", 
+                   recordsToSend.size(), batchesToSend.size(), request.getSerializedSize());
 
-        // Send the request and receive the response (acknowledgement)
-        Logger.info("SENDING OVER BATCH OF RECORDS.");
+        // Send the request with retry logic
+        sendBatchesWithRetry(request, recordsToSend.size(), batchesToSend.size(), 0);
+    }
+
+    /**
+     * Send batches with retry logic and exponential backoff
+     */
+    private void sendBatchesWithRetry(PublishDataToBrokerRequest request, int recordCount, int batchCount, int attemptCount) {
         ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
         Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
             @Override
             public void onSuccess(BrokerToPublisherAck response) {
-                Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
-                        response.getAcknowledgement(),
-                        response.getStatus(),
-                        response.getRecordOffset()
-                );
+                Logger.info("Successfully sent {} records in {} batches - Acknowledgement={}, Status={}, RecordOffset={}", 
+                           recordCount, batchCount,
+                           response.getAcknowledgement(),
+                           response.getStatus(),
+                           response.getRecordOffset());
             }
 
             @Override
             public void onFailure(Throwable t) {
-                // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
-                Logger.error(t);
+                if (attemptCount < maxRetries) {
+                    // Calculate exponential backoff
+                    long backoffDelay = retryBackoffMs * (1L << attemptCount);
+                    
+                    Logger.warn("Batch send failed (attempt {}/{}), retrying in {}ms: {}", 
+                               attemptCount + 1, maxRetries + 1, backoffDelay, t.getMessage());
+                    
+                    // Schedule retry after backoff
+                    FluxExecutor.getSchedulerService().schedule(() -> {
+                        sendBatchesWithRetry(request, recordCount, batchCount, attemptCount + 1);
+                    }, backoffDelay, TimeUnit.MILLISECONDS);
+                } else {
+                    Logger.error("Failed to send {} records in {} batches after {} attempts: {}", 
+                                recordCount, batchCount, maxRetries + 1, t.getMessage(), t);
+                    // TODO: Could implement dead letter queue or alerting here
+                    // For now, we log the error and continue
+                }
             }
         }, FluxExecutor.getExecutorService());
     }
@@ -170,6 +235,20 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         // Using an AtomicReference allows us to take advantage of hardware-level instructions, such as compare_and_swap,
         // to ensure thread safety on our metadata cache while avoiding the use of locks
         // (because locking can incur overhead and dampen performance a bit in multithreaded environments)
+        BrokerMetadataSnapshot oldSnapshot = cachedBrokerMetadata.get();
         cachedBrokerMetadata.set(newSnapshot.get());
+        
+        // Check if partition count changed - if so, we may need to flush current batches
+        int oldPartitions = oldSnapshot.getNumPartitions();
+        int newPartitions = newSnapshot.get().getNumPartitions();
+        
+        if (oldPartitions != newPartitions) {
+            Logger.info("Partition count changed from {} to {} - flushing current batches", 
+                       oldPartitions, newPartitions);
+            // Flush existing batches before partition count changes
+            flushBuffer();
+            // Note: RecordAccumulator will automatically handle new partition numbers
+            // when records are appended to partitions that don't exist in its map yet
+        }
     }
 }

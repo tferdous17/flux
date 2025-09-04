@@ -4,14 +4,35 @@ import org.tinylog.Logger;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 public class RecordBatch {
     private final int maxBatchSizeInBytes;
     private int currBatchSizeInBytes;
     private int numRecords;
     private ByteBuffer batch;
+    private final List<RecordMetadata> recordMetadataList; // Store metadata for each record
+    private final long createdTimeMs; // For batch timeout tracking
 
     private static final int DEFAULT_BATCH_SIZE = 10_240; // default batch size: 10 KB = 10,240 bytes
+
+    /**
+     * Metadata for individual records within the batch
+     */
+    public static class RecordMetadata {
+        public final String topicName;
+        public final int partition;
+        public final int recordLength;
+        public final int offsetInBatch;
+
+        public RecordMetadata(String topicName, int partition, int recordLength, int offsetInBatch) {
+            this.topicName = topicName;
+            this.partition = partition;
+            this.recordLength = recordLength;
+            this.offsetInBatch = offsetInBatch;
+        }
+    }
 
     public RecordBatch() {
         this(DEFAULT_BATCH_SIZE);
@@ -21,18 +42,37 @@ public class RecordBatch {
         this.maxBatchSizeInBytes = maxBatchSizeInBytes;
         this.currBatchSizeInBytes = 0;
         this.numRecords = 0;
-        this.batch = ByteBuffer.allocate(DEFAULT_BATCH_SIZE);
+        this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
+        this.recordMetadataList = new ArrayList<>();
+        this.createdTimeMs = System.currentTimeMillis();
     }
 
     // NOTE: This method may need refactoring once SerializedRecord (Producer) is implemented, but logic remains same
     public boolean append(byte[] serializedRecord) throws IOException {
-        // use a boolean to represent if a record could fit in the current batch or not
-        // if not, use the returned `false` value as a signal to create an additional batch
+        // Default method - extract topic/partition from record if possible
+        return append(serializedRecord, null, -1);
+    }
+
+    /**
+     * Append a record with metadata to the batch
+     * @param serializedRecord the serialized record data
+     * @param topicName topic name for the record
+     * @param partition partition for the record
+     * @return true if record fits, false if batch is full
+     */
+    public boolean append(byte[] serializedRecord, String topicName, int partition) throws IOException {
+        // Check if record can fit in the current batch
         if (currBatchSizeInBytes + serializedRecord.length > maxBatchSizeInBytes) {
             Logger.warn("Record can not fit in current batch. New one may be necessary");
             return false;
         }
-        // record can fit, so add to batch and return true
+        
+        // Store metadata for this record
+        int offsetInBatch = currBatchSizeInBytes;
+        RecordMetadata metadata = new RecordMetadata(topicName, partition, serializedRecord.length, offsetInBatch);
+        recordMetadataList.add(metadata);
+        
+        // Add record to batch
         batch.put(serializedRecord);
         currBatchSizeInBytes += serializedRecord.length;
         numRecords++;
@@ -56,9 +96,42 @@ public class RecordBatch {
         return batch;
     }
 
+    public List<RecordMetadata> getRecordMetadata() {
+        return new ArrayList<>(recordMetadataList); // Return copy to prevent external modification
+    }
+
+    public long getCreatedTimeMs() {
+        return createdTimeMs;
+    }
+
+    public boolean isExpired(long timeoutMs) {
+        return System.currentTimeMillis() - createdTimeMs > timeoutMs;
+    }
+
+    /**
+     * Get individual IntermediaryRecord objects from this batch
+     * @return List of IntermediaryRecord objects
+     */
+    public List<IntermediaryRecord> getIntermediaryRecords() {
+        List<IntermediaryRecord> records = new ArrayList<>();
+        ByteBuffer readBuffer = batch.duplicate(); // Create a read-only view
+        readBuffer.rewind(); // Reset position to start
+        
+        for (RecordMetadata metadata : recordMetadataList) {
+            byte[] recordData = new byte[metadata.recordLength];
+            readBuffer.position(metadata.offsetInBatch);
+            readBuffer.get(recordData);
+            
+            records.add(new IntermediaryRecord(metadata.topicName, metadata.partition, recordData));
+        }
+        
+        return records;
+    }
+
     public void printBatchDetails() {
         System.out.println("Number of Records: " + getRecordCount());
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
-        System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes\n");
+        System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
+        System.out.println("Created: " + createdTimeMs + "ms ago\n");
     }
 }
