@@ -21,6 +21,7 @@ public class RecordAccumulator {
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
+    private final BatchCallbackRegistry callbackRegistry; // Callback management
 
     public RecordAccumulator(int numPartitions) {
         this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS);
@@ -43,14 +44,29 @@ public class RecordAccumulator {
         // Initialize the buffer pool with configured memory
         long maxBlockTimeMs = 1000; // 1 second max wait for memory
         this.bufferPool = new BufferPool(bufferMemory, batchSize, maxBlockTimeMs);
+        
+        // Initialize the callback registry
+        this.callbackRegistry = new BatchCallbackRegistry();
+        
         Logger.info("RecordAccumulator initialized with BufferPool - Memory: {}MB, BatchSize: {}KB", 
                    bufferMemory / (1024 * 1024), batchSize / 1024);
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
         Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
+        
         // Create batch with buffer pool support
-        return new RecordBatch(batchSize, bufferPool);
+        RecordBatch batch = new RecordBatch(batchSize, bufferPool);
+        
+        // Add default callbacks for resource management and logging
+        batch.addCallback(new BufferReleaseCallback());
+        batch.addCallback(new LoggingCallback());
+        
+        // Notify that batch was created
+        batch.notifyBatchCreated();
+        callbackRegistry.executeBatchCreatedCallbacks(batch.getBatchInfo());
+        
+        return batch;
     }
 
     /**
@@ -70,9 +86,16 @@ public class RecordAccumulator {
                 }
             }
             
-            // Remove ready batches from accumulator and release their buffers
+            // Remove ready batches from accumulator and notify callbacks
             for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
+                RecordBatch batch = entry.getValue();
                 partitionBatches.remove(entry.getKey());
+                
+                // Update batch state and notify callbacks
+                batch.setState(BatchState.READY);
+                batch.notifyBatchReady();
+                callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
+                
                 // Note: Buffer release will be handled after the batch is sent
             }
             
@@ -99,6 +122,15 @@ public class RecordAccumulator {
             
             // Create a copy of current batches to return
             Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
+            
+            // Update batch states and notify callbacks before clearing
+            for (RecordBatch batch : batchesToFlush.values()) {
+                if (batch != null && batch.getRecordCount() > 0) {
+                    batch.setState(BatchState.READY);
+                    batch.notifyBatchReady();
+                    callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
+                }
+            }
             
             // Clear the current batches since they're being flushed
             // Note: Buffer release will be handled after the batches are sent
@@ -286,6 +318,110 @@ public class RecordAccumulator {
     }
     
     /**
+     * Add a callback to be notified about batch lifecycle events.
+     *
+     * @param batchId The batch ID to register the callback for
+     * @param callback The callback to register
+     */
+    public void addBatchCallback(String batchId, BatchCallback callback) {
+        callbackRegistry.registerCallback(batchId, callback);
+    }
+    
+    /**
+     * Remove a callback for a specific batch.
+     *
+     * @param batchId The batch ID
+     * @param callback The callback to remove
+     * @return true if the callback was removed
+     */
+    public boolean removeBatchCallback(String batchId, BatchCallback callback) {
+        return callbackRegistry.unregisterCallback(batchId, callback);
+    }
+    
+    /**
+     * Notify callbacks that a batch is being sent.
+     *
+     * @param batchId The batch being sent
+     */
+    public void onBatchSending(String batchId) {
+        // Find the batch and update its state
+        synchronized (batchLock) {
+            for (RecordBatch batch : partitionBatches.values()) {
+                if (batch != null && batch.getBatchId().equals(batchId)) {
+                    batch.setState(BatchState.SENDING);
+                    batch.setSentTime(System.currentTimeMillis());
+                    batch.notifyBatchSending();
+                    callbackRegistry.executeBatchSendingCallbacks(batch.getBatchInfo());
+                    break;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Notify callbacks that a batch has been successfully sent.
+     *
+     * @param batchId The batch that was sent successfully
+     * @param result The broker acknowledgment/result
+     */
+    public void onBatchSendSuccess(String batchId, Object result) {
+        // Find the batch and notify success
+        RecordBatch batch = findBatchById(batchId);
+        if (batch != null) {
+            batch.setState(BatchState.COMPLETED);
+            batch.notifyBatchSuccess(result);
+            callbackRegistry.executeBatchSuccessCallbacks(batch.getBatchInfo(), result);
+        } else {
+            Logger.warn("Could not find batch {} for success callback", batchId);
+        }
+    }
+    
+    /**
+     * Notify callbacks that a batch has failed to send.
+     *
+     * @param batchId The batch that failed to send
+     * @param exception The error that caused the failure
+     */
+    public void onBatchSendFailure(String batchId, Throwable exception) {
+        // Find the batch and notify failure
+        RecordBatch batch = findBatchById(batchId);
+        if (batch != null) {
+            batch.setState(BatchState.FAILED);
+            batch.notifyBatchFailure(exception);
+            callbackRegistry.executeBatchFailureCallbacks(batch.getBatchInfo(), exception);
+        } else {
+            Logger.warn("Could not find batch {} for failure callback", batchId);
+        }
+    }
+    
+    /**
+     * Find a batch by its ID across all partitions.
+     * This is used for callback notifications when we only have the batch ID.
+     */
+    private RecordBatch findBatchById(String batchId) {
+        synchronized (batchLock) {
+            for (RecordBatch batch : partitionBatches.values()) {
+                if (batch != null && batch.getBatchId().equals(batchId)) {
+                    return batch;
+                }
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Get callback registry statistics.
+     *
+     * @return String containing callback registry stats
+     */
+    public String getCallbackStats() {
+        return String.format("Callback Registry Stats - Batches: %d, Total Callbacks: %d, Active: %d",
+                           callbackRegistry.getBatchCount(),
+                           callbackRegistry.getTotalCallbackCount(),
+                           callbackRegistry.getActiveCallbackCount());
+    }
+    
+    /**
      * Close the accumulator and release all resources
      */
     public void close() {
@@ -297,6 +433,11 @@ public class RecordAccumulator {
                 }
             }
             partitionBatches.clear();
+            
+            // Close the callback registry
+            if (callbackRegistry != null) {
+                callbackRegistry.shutdown();
+            }
             
             // Close the buffer pool
             if (bufferPool != null) {

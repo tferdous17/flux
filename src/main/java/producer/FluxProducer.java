@@ -164,6 +164,17 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             Logger.info("No records to send in batches");
             return;
         }
+        
+        // Collect batch IDs for callback notifications
+        List<String> batchIds = batchesToSend.values().stream()
+                .filter(batch -> batch != null)
+                .map(batch -> batch.getBatchId())
+                .toList();
+        
+        // Notify accumulator that batches are being sent
+        for (String batchId : batchIds) {
+            recordAccumulator.onBatchSending(batchId);
+        }
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                 .newBuilder()
@@ -183,14 +194,14 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         Logger.info("Sending {} records in {} batches (size: {} bytes)", 
                    recordsToSend.size(), batchesToSend.size(), request.getSerializedSize());
 
-        // Send the request with retry logic
-        sendBatchesWithRetry(request, recordsToSend.size(), batchesToSend.size(), 0);
+        // Send the request with retry logic, passing batch IDs for callback notifications
+        sendBatchesWithRetry(request, recordsToSend.size(), batchesToSend.size(), batchIds, 0);
     }
 
     /**
      * Send batches with retry logic and exponential backoff
      */
-    private void sendBatchesWithRetry(PublishDataToBrokerRequest request, int recordCount, int batchCount, int attemptCount) {
+    private void sendBatchesWithRetry(PublishDataToBrokerRequest request, int recordCount, int batchCount, List<String> batchIds, int attemptCount) {
         ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
         Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
             @Override
@@ -200,6 +211,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                            response.getAcknowledgement(),
                            response.getStatus(),
                            response.getRecordOffset());
+                
+                // Notify accumulator of successful batch sends
+                for (String batchId : batchIds) {
+                    recordAccumulator.onBatchSendSuccess(batchId, response);
+                }
             }
 
             @Override
@@ -213,11 +229,17 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                     
                     // Schedule retry after backoff
                     FluxExecutor.getSchedulerService().schedule(() -> {
-                        sendBatchesWithRetry(request, recordCount, batchCount, attemptCount + 1);
+                        sendBatchesWithRetry(request, recordCount, batchCount, batchIds, attemptCount + 1);
                     }, backoffDelay, TimeUnit.MILLISECONDS);
                 } else {
                     Logger.error("Failed to send {} records in {} batches after {} attempts: {}", 
                                 recordCount, batchCount, maxRetries + 1, t.getMessage(), t);
+                    
+                    // Notify accumulator of failed batch sends after all retries exhausted
+                    for (String batchId : batchIds) {
+                        recordAccumulator.onBatchSendFailure(batchId, t);
+                    }
+                    
                     // TODO: Could implement dead letter queue or alerting here
                     // For now, we log the error and continue
                 }
