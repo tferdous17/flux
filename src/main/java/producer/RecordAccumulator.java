@@ -13,12 +13,14 @@ import java.util.HashMap;
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
     static private final long DEFAULT_LINGER_MS = 100; // 100ms default linger time
+    static private final long DEFAULT_BUFFER_MEMORY = 32 * 1024 * 1024L; // 32MB default
 
     private final int batchSize;
     private final long lingerMs;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
+    private final BufferPool bufferPool; // Memory management pool
 
     public RecordAccumulator(int numPartitions) {
         this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS);
@@ -29,15 +31,26 @@ public class RecordAccumulator {
     }
 
     public RecordAccumulator(int batchSize, int numPartitions, long lingerMs) {
+        this(batchSize, numPartitions, lingerMs, DEFAULT_BUFFER_MEMORY);
+    }
+    
+    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long bufferMemory) {
         this.batchSize = validateBatchSize(batchSize);
         this.lingerMs = lingerMs;
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
+        
+        // Initialize the buffer pool with configured memory
+        long maxBlockTimeMs = 1000; // 1 second max wait for memory
+        this.bufferPool = new BufferPool(bufferMemory, batchSize, maxBlockTimeMs);
+        Logger.info("RecordAccumulator initialized with BufferPool - Memory: {}MB, BatchSize: {}KB", 
+                   bufferMemory / (1024 * 1024), batchSize / 1024);
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
         Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
-        return new RecordBatch(batchSize);
+        // Create batch with buffer pool support
+        return new RecordBatch(batchSize, bufferPool);
     }
 
     /**
@@ -57,9 +70,10 @@ public class RecordAccumulator {
                 }
             }
             
-            // Remove ready batches from accumulator
-            for (Integer partition : readyBatches.keySet()) {
-                partitionBatches.remove(partition);
+            // Remove ready batches from accumulator and release their buffers
+            for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
+                partitionBatches.remove(entry.getKey());
+                // Note: Buffer release will be handled after the batch is sent
             }
             
             if (!readyBatches.isEmpty()) {
@@ -87,6 +101,7 @@ public class RecordAccumulator {
             Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
             
             // Clear the current batches since they're being flushed
+            // Note: Buffer release will be handled after the batches are sent
             partitionBatches.clear();
             
             return batchesToFlush;
@@ -237,5 +252,58 @@ public class RecordAccumulator {
             );
         }
         return batchSize;
+    }
+    
+    /**
+     * Get the buffer pool for monitoring or management
+     */
+    public BufferPool getBufferPool() {
+        return bufferPool;
+    }
+    
+    /**
+     * Check if memory pressure exists
+     */
+    public boolean hasMemoryPressure() {
+        return bufferPool != null && bufferPool.isUnderMemoryPressure();
+    }
+    
+    /**
+     * Release buffers for completed batches
+     * Should be called after batches are successfully sent
+     */
+    public void releaseBatchBuffers(Map<Integer, RecordBatch> sentBatches) {
+        if (sentBatches == null) {
+            return;
+        }
+        
+        for (RecordBatch batch : sentBatches.values()) {
+            if (batch != null) {
+                batch.releaseBuffer();
+            }
+        }
+        Logger.debug("Released buffers for {} sent batches", sentBatches.size());
+    }
+    
+    /**
+     * Close the accumulator and release all resources
+     */
+    public void close() {
+        synchronized (batchLock) {
+            // Release all remaining batch buffers
+            for (RecordBatch batch : partitionBatches.values()) {
+                if (batch != null) {
+                    batch.releaseBuffer();
+                }
+            }
+            partitionBatches.clear();
+            
+            // Close the buffer pool
+            if (bufferPool != null) {
+                bufferPool.close();
+            }
+            
+            Logger.info("RecordAccumulator closed and resources released");
+        }
     }
 }

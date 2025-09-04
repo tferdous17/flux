@@ -14,6 +14,8 @@ public class RecordBatch {
     private ByteBuffer batch;
     private final List<RecordMetadata> recordMetadataList; // Store metadata for each record
     private final long createdTimeMs; // For batch timeout tracking
+    private final BufferPool bufferPool; // Optional buffer pool for memory management
+    private final boolean pooledBuffer; // Track if this buffer came from a pool
 
     private static final int DEFAULT_BATCH_SIZE = 10_240; // default batch size: 10 KB = 10,240 bytes
 
@@ -39,12 +41,42 @@ public class RecordBatch {
     }
 
     public RecordBatch(int maxBatchSizeInBytes) {
+        this(maxBatchSizeInBytes, null);
+    }
+    
+    /**
+     * Create a RecordBatch with optional BufferPool support
+     * @param maxBatchSizeInBytes Maximum size of the batch
+     * @param bufferPool Optional buffer pool for memory management
+     */
+    public RecordBatch(int maxBatchSizeInBytes, BufferPool bufferPool) {
         this.maxBatchSizeInBytes = maxBatchSizeInBytes;
         this.currBatchSizeInBytes = 0;
         this.numRecords = 0;
-        this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
+        this.bufferPool = bufferPool;
         this.recordMetadataList = new ArrayList<>();
         this.createdTimeMs = System.currentTimeMillis();
+        
+        // Try to get buffer from pool if available
+        if (bufferPool != null) {
+            try {
+                this.batch = bufferPool.allocate(maxBatchSizeInBytes);
+                this.pooledBuffer = true;
+                Logger.debug("Allocated batch buffer from pool (size: {} bytes)", maxBatchSizeInBytes);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Logger.warn("Interrupted while allocating buffer from pool, using direct allocation");
+                this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
+                this.pooledBuffer = false;
+            } catch (Exception e) {
+                Logger.warn("Failed to allocate buffer from pool: {}, using direct allocation", e.getMessage());
+                this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
+                this.pooledBuffer = false;
+            }
+        } else {
+            this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
+            this.pooledBuffer = false;
+        }
     }
 
     // NOTE: This method may need refactoring once SerializedRecord (Producer) is implemented, but logic remains same
@@ -133,5 +165,24 @@ public class RecordBatch {
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
         System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
         System.out.println("Created: " + createdTimeMs + "ms ago\n");
+    }
+    
+    /**
+     * Release the buffer back to the pool if it was allocated from one
+     * This should be called when the batch is sent or discarded
+     */
+    public void releaseBuffer() {
+        if (pooledBuffer && bufferPool != null && batch != null) {
+            bufferPool.deallocate(batch);
+            batch = null; // Prevent reuse after release
+            Logger.debug("Released batch buffer back to pool");
+        }
+    }
+    
+    /**
+     * Check if this batch uses a pooled buffer
+     */
+    public boolean isPooledBuffer() {
+        return pooledBuffer;
     }
 }

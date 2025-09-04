@@ -59,13 +59,14 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         int numPartitions = cachedBrokerMetadata.get().getNumPartitions();
         int batchSize = Integer.parseInt(props.getProperty("batch.size", "10240")); // 10KB default
         long lingerMs = Long.parseLong(props.getProperty("linger.ms", "100")); // 100ms default
+        long bufferMemory = Long.parseLong(props.getProperty("buffer.memory", "33554432")); // 32MB default
         maxRetries = Integer.parseInt(props.getProperty("retries", "3")); // 3 retries default
         retryBackoffMs = Long.parseLong(props.getProperty("retry.backoff.ms", "1000")); // 1s backoff default
         
-        recordAccumulator = new RecordAccumulator(batchSize, numPartitions, lingerMs);
+        recordAccumulator = new RecordAccumulator(batchSize, numPartitions, lingerMs, bufferMemory);
         
-        Logger.info("FluxProducer initialized - Partitions: {}, BatchSize: {}KB, LingerMs: {}ms, MaxRetries: {}, RetryBackoff: {}ms", 
-                   numPartitions, batchSize / 1024, lingerMs, maxRetries, retryBackoffMs);
+        Logger.info("FluxProducer initialized - Partitions: {}, BatchSize: {}KB, LingerMs: {}ms, BufferMemory: {}MB, MaxRetries: {}, RetryBackoff: {}ms", 
+                   numPartitions, batchSize / 1024, lingerMs, bufferMemory / (1024 * 1024), maxRetries, retryBackoffMs);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -227,6 +228,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     @Override
     public void close() {
         flushBuffer();
+        recordAccumulator.close(); // Close accumulator and release buffer pool
         channel.shutdownNow();
     }
 
