@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * RecordAccumulator manages the batching of producer records for efficient transmission.
@@ -48,7 +49,7 @@ public class RecordAccumulator {
     private final long lingerMs;
     private final long batchTimeoutMs;
     private final double batchSizeThreshold;
-    private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
+    private final ConcurrentHashMap<Integer, RecordBatch> partitionBatches; // Thread-safe per-partition batches
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
@@ -123,7 +124,7 @@ public class RecordAccumulator {
         this.lingerMs = lingerMs;
         this.batchTimeoutMs = batchTimeoutMs;
         this.batchSizeThreshold = batchSizeThreshold;
-        this.partitionBatches = new HashMap<>();
+        this.partitionBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
         
         // Initialize the buffer pool with configured memory
@@ -159,37 +160,38 @@ public class RecordAccumulator {
      * @return Map of partition to RecordBatch for ready batches
      */
     public Map<Integer, RecordBatch> getReadyBatches() {
-        synchronized (batchLock) {
-            Map<Integer, RecordBatch> readyBatches = new HashMap<>();
+        Map<Integer, RecordBatch> readyBatches = new ConcurrentHashMap<>();
+        
+        // First pass: identify ready batches (thread-safe iteration)
+        for (Map.Entry<Integer, RecordBatch> entry : partitionBatches.entrySet()) {
+            int partition = entry.getKey();
+            RecordBatch batch = entry.getValue();
             
-            for (Map.Entry<Integer, RecordBatch> entry : partitionBatches.entrySet()) {
-                int partition = entry.getKey();
-                RecordBatch batch = entry.getValue();
-                
-                if (batch != null && isBatchReady(batch)) {
+            if (batch != null && isBatchReady(batch)) {
+                // Atomically remove from partitionBatches if still present
+                if (partitionBatches.remove(partition, batch)) {
                     readyBatches.put(partition, batch);
                 }
             }
-            
-            // Remove ready batches from accumulator and notify callbacks
-            for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
-                RecordBatch batch = entry.getValue();
-                partitionBatches.remove(entry.getKey());
-                
-                // Update batch state and notify callbacks
-                batch.setState(BatchState.READY);
-                batch.notifyBatchReady();
-                callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
-                
-                // Note: Buffer release will be handled after the batch is sent
-            }
-            
-            if (!readyBatches.isEmpty()) {
-                Logger.info("Found " + readyBatches.size() + " ready batches");
-            }
-            
-            return readyBatches;
         }
+        
+        // Second pass: update states and notify callbacks (no lock needed)
+        for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
+            RecordBatch batch = entry.getValue();
+            
+            // Update batch state and notify callbacks
+            batch.setState(BatchState.READY);
+            batch.notifyBatchReady();
+            callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
+            
+            // Note: Buffer release will be handled after the batch is sent
+        }
+        
+        if (!readyBatches.isEmpty()) {
+            Logger.info("Found " + readyBatches.size() + " ready batches");
+        }
+        
+        return readyBatches;
     }
 
     /**
@@ -347,6 +349,7 @@ public class RecordAccumulator {
 
     /**
      * Get the current batch for a specific partition
+     * Thread-safe operation using ConcurrentHashMap
      */
     public RecordBatch getCurrentBatch(int partition) {
         return partitionBatches.get(partition);
@@ -361,9 +364,10 @@ public class RecordAccumulator {
 
     /**
      * Get all partition batches
+     * @return A copy of the current partition batches to prevent external modification
      */
     public Map<Integer, RecordBatch> getPartitionBatches() {
-        return new HashMap<>(partitionBatches); // Return copy to prevent external modification
+        return new ConcurrentHashMap<>(partitionBatches); // Return thread-safe copy
     }
 
     /**
