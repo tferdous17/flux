@@ -12,31 +12,8 @@ import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * RecordAccumulator manages the batching of producer records for efficient transmission.
- * 
- * <h3>Configuration Parameters:</h3>
- * <ul>
- *   <li><b>batch.size</b> - Maximum size in bytes for each batch (1 byte - 1MB, default: 10KB)</li>
- *   <li><b>linger.ms</b> - Maximum time to wait for additional records before sending (0-60000ms, default: 100ms)</li>
- *   <li><b>batch.timeout.ms</b> - Maximum time a batch can exist before forced sending (>= linger.ms, max: 300000ms, default: 30000ms)</li>
- *   <li><b>batch.size.threshold</b> - Percentage of batch size that triggers sending (0.0-1.0, default: 0.9)</li>
- *   <li><b>buffer.memory</b> - Total memory available for buffering (>= batch.size, max: 1GB, default: 32MB)</li>
- * </ul>
- * 
- * <h3>Batch Completion Triggers:</h3>
- * A batch is sent when any of these conditions are met:
- * <ol>
- *   <li>Batch size exceeds the configured threshold (e.g., 90% of max size)</li>
- *   <li>Batch has existed longer than the linger time</li>
- *   <li>Batch has existed longer than the maximum timeout (forced completion)</li>
- * </ol>
- * 
- * <h3>Thread Safety:</h3>
- * This class is thread-safe and can be used concurrently from multiple threads.
- * 
- * @see FluxProducer
- * @see RecordBatch
- * @see BufferPool
+ * Batches producer records for efficient transmission.
+ * Thread-safe for concurrent use.
  */
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
