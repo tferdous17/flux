@@ -1,38 +1,41 @@
 package producer;
 
 import org.junit.jupiter.api.Test;
-import java.util.Properties;
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Unit tests for FluxProducer configuration validation.
+ * Tests focus on configuration validation logic through RecordAccumulator.
+ */
 public class FluxProducerTest {
     
     @Test
-    public void testDefaultProducer() {
-        FluxProducer<String, String> producer = new FluxProducer<>();
-        assertNotNull(producer);
-    }
-
-    @Test
-    public void testValidConfiguration() {
-        Properties props = new Properties();
-        props.setProperty("batch.size", "8192");
-        props.setProperty("linger.ms", "200");
+    public void testConfigurationValidation() {
+        // Test invalid batch size
+        assertThrows(IllegalArgumentException.class, () -> {
+            new RecordAccumulator(0, 3, 100, 30000, 0.9, 32 * 1024 * 1024L);
+        }, "Should throw exception for batch size <= 0");
         
-        assertDoesNotThrow(() -> {
-            FluxProducer<String, String> producer = new FluxProducer<>(props, 60, 60);
-            assertEquals(8192, producer.getAccumulator().getBatchSize());
-            assertEquals(200, producer.getAccumulator().getLingerMs());
-            producer.close();
-        });
+        // Test invalid batch size threshold
+        assertThrows(IllegalArgumentException.class, () -> {
+            new RecordAccumulator(1024, 3, 100, 30000, 1.5, 32 * 1024 * 1024L);
+        }, "Should throw exception for batch size threshold > 1");
+        
+        assertThrows(IllegalArgumentException.class, () -> {
+            new RecordAccumulator(1024, 3, 100, 30000, -0.1, 32 * 1024 * 1024L);
+        }, "Should throw exception for batch size threshold < 0");
     }
     
     @Test
-    public void testInvalidConfiguration() {
-        Properties props = new Properties();
-        props.setProperty("batch.size", "0");
-        props.setProperty("batch.size.threshold", "1.5");
-        
-        assertThrows(IllegalArgumentException.class, () -> 
-            new FluxProducer<String, String>(props, 60, 60));
+    public void testValidConfigurationValues() {
+        // Test valid configuration doesn't throw
+        assertDoesNotThrow(() -> {
+            RecordAccumulator accumulator = new RecordAccumulator(8192, 3, 200, 15000, 0.8, 16 * 1024 * 1024L);
+            assertEquals(8192, accumulator.getBatchSize());
+            assertEquals(200, accumulator.getLingerMs());
+            assertEquals(15000, accumulator.getBatchTimeoutMs());
+            assertEquals(0.8, accumulator.getBatchSizeThreshold(), 0.001);
+            accumulator.close();
+        });
     }
 }

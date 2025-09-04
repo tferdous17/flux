@@ -27,6 +27,7 @@ public class RecordAccumulator {
     private final long batchTimeoutMs;
     private final double batchSizeThreshold;
     private final ConcurrentHashMap<Integer, RecordBatch> partitionBatches; // Thread-safe per-partition batches
+    private final ConcurrentHashMap<String, RecordBatch> inflightBatches; // Track batches that have been flushed but not completed
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
@@ -102,6 +103,7 @@ public class RecordAccumulator {
         this.batchTimeoutMs = batchTimeoutMs;
         this.batchSizeThreshold = batchSizeThreshold;
         this.partitionBatches = new ConcurrentHashMap<>();
+        this.inflightBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
         
         // Initialize the buffer pool with configured memory
@@ -160,6 +162,8 @@ public class RecordAccumulator {
             batch.setState(BatchState.READY);
             batch.notifyBatchReady();
             callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
+            // Track this batch as in-flight
+            inflightBatches.put(batch.getBatchId(), batch);
             
             // Note: Buffer release will be handled after the batch is sent
         }
@@ -193,6 +197,8 @@ public class RecordAccumulator {
                     batch.setState(BatchState.READY);
                     batch.notifyBatchReady();
                     callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
+                    // Track this batch as in-flight
+                    inflightBatches.put(batch.getBatchId(), batch);
                 }
             }
             
@@ -528,17 +534,15 @@ public class RecordAccumulator {
      * @param batchId The batch being sent
      */
     public void onBatchSending(String batchId) {
-        // Find the batch and update its state
-        synchronized (batchLock) {
-            for (RecordBatch batch : partitionBatches.values()) {
-                if (batch != null && batch.getBatchId().equals(batchId)) {
-                    batch.setState(BatchState.SENDING);
-                    batch.setSentTime(System.currentTimeMillis());
-                    batch.notifyBatchSending();
-                    callbackRegistry.executeBatchSendingCallbacks(batch.getBatchInfo());
-                    break;
-                }
-            }
+        // Find the batch and update its state - use the common findBatchById method
+        RecordBatch batch = findBatchById(batchId);
+        if (batch != null) {
+            batch.setState(BatchState.SENDING);
+            batch.setSentTime(System.currentTimeMillis());
+            batch.notifyBatchSending();
+            callbackRegistry.executeBatchSendingCallbacks(batch.getBatchInfo());
+        } else {
+            Logger.warn("Could not find batch {} for sending callback", batchId);
         }
     }
     
@@ -555,6 +559,8 @@ public class RecordAccumulator {
             batch.setState(BatchState.COMPLETED);
             batch.notifyBatchSuccess(result);
             callbackRegistry.executeBatchSuccessCallbacks(batch.getBatchInfo(), result);
+            // Remove from in-flight batches after successful completion
+            inflightBatches.remove(batchId);
         } else {
             Logger.warn("Could not find batch {} for success callback", batchId);
         }
@@ -573,6 +579,8 @@ public class RecordAccumulator {
             batch.setState(BatchState.FAILED);
             batch.notifyBatchFailure(exception);
             callbackRegistry.executeBatchFailureCallbacks(batch.getBatchInfo(), exception);
+            // Remove from in-flight batches after failure
+            inflightBatches.remove(batchId);
         } else {
             Logger.warn("Could not find batch {} for failure callback", batchId);
         }
@@ -583,10 +591,17 @@ public class RecordAccumulator {
      * This is used for callback notifications when we only have the batch ID.
      */
     private RecordBatch findBatchById(String batchId) {
+        // First check in-flight batches (batches that have been flushed)
+        RecordBatch batch = inflightBatches.get(batchId);
+        if (batch != null) {
+            return batch;
+        }
+        
+        // Then check current partition batches
         synchronized (batchLock) {
-            for (RecordBatch batch : partitionBatches.values()) {
-                if (batch != null && batch.getBatchId().equals(batchId)) {
-                    return batch;
+            for (RecordBatch b : partitionBatches.values()) {
+                if (b != null && b.getBatchId().equals(batchId)) {
+                    return b;
                 }
             }
         }
@@ -617,6 +632,14 @@ public class RecordAccumulator {
                 }
             }
             partitionBatches.clear();
+            
+            // Release all in-flight batch buffers
+            for (RecordBatch batch : inflightBatches.values()) {
+                if (batch != null) {
+                    batch.releaseBuffer();
+                }
+            }
+            inflightBatches.clear();
             
             // Close the callback registry
             if (callbackRegistry != null) {

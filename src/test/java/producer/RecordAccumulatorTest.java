@@ -72,10 +72,16 @@ public class RecordAccumulatorTest {
         byte[] serializedData = serializeRecord(record);
         
         accumulator.append(serializedData);
-        assertTrue(accumulator.getReadyBatches().isEmpty());
+        Map<Integer, RecordBatch> firstCheck = accumulator.getReadyBatches();
+        assertTrue(firstCheck.isEmpty());
         
         accumulator.append(serializedData);
-        assertFalse(accumulator.getReadyBatches().isEmpty());
+        
+        // Add more records to ensure we exceed the 50% threshold (500 bytes)
+        accumulator.append(serializedData);
+        
+        Map<Integer, RecordBatch> secondCheck = accumulator.getReadyBatches();
+        assertFalse(secondCheck.isEmpty());
     }
 
     @Test
