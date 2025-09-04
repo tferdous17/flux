@@ -10,34 +10,119 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
+/**
+ * RecordAccumulator manages the batching of producer records for efficient transmission.
+ * 
+ * <h3>Configuration Parameters:</h3>
+ * <ul>
+ *   <li><b>batch.size</b> - Maximum size in bytes for each batch (1 byte - 1MB, default: 10KB)</li>
+ *   <li><b>linger.ms</b> - Maximum time to wait for additional records before sending (0-60000ms, default: 100ms)</li>
+ *   <li><b>batch.timeout.ms</b> - Maximum time a batch can exist before forced sending (>= linger.ms, max: 300000ms, default: 30000ms)</li>
+ *   <li><b>batch.size.threshold</b> - Percentage of batch size that triggers sending (0.0-1.0, default: 0.9)</li>
+ *   <li><b>buffer.memory</b> - Total memory available for buffering (>= batch.size, max: 1GB, default: 32MB)</li>
+ * </ul>
+ * 
+ * <h3>Batch Completion Triggers:</h3>
+ * A batch is sent when any of these conditions are met:
+ * <ol>
+ *   <li>Batch size exceeds the configured threshold (e.g., 90% of max size)</li>
+ *   <li>Batch has existed longer than the linger time</li>
+ *   <li>Batch has existed longer than the maximum timeout (forced completion)</li>
+ * </ol>
+ * 
+ * <h3>Thread Safety:</h3>
+ * This class is thread-safe and can be used concurrently from multiple threads.
+ * 
+ * @see FluxProducer
+ * @see RecordBatch
+ * @see BufferPool
+ */
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
     static private final long DEFAULT_LINGER_MS = 100; // 100ms default linger time
+    static private final long DEFAULT_BATCH_TIMEOUT_MS = 30_000; // 30s default batch timeout
+    static private final double DEFAULT_BATCH_SIZE_THRESHOLD = 0.9; // 90% default threshold
     static private final long DEFAULT_BUFFER_MEMORY = 32 * 1024 * 1024L; // 32MB default
 
     private final int batchSize;
     private final long lingerMs;
+    private final long batchTimeoutMs;
+    private final double batchSizeThreshold;
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
     private final BatchCallbackRegistry callbackRegistry; // Callback management
 
+    /**
+     * Create a RecordAccumulator with default configuration.
+     * Uses: 10KB batches, 100ms linger, 30s timeout, 90% threshold, 32MB memory
+     * 
+     * @param numPartitions Number of partitions to manage batches for
+     */
     public RecordAccumulator(int numPartitions) {
-        this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS);
+        this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
     }
 
+    /**
+     * Create a RecordAccumulator with custom batch size, other defaults.
+     * Uses: custom batch size, 100ms linger, 30s timeout, 90% threshold, 32MB memory
+     * 
+     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
+     * @param numPartitions Number of partitions to manage batches for
+     */
     public RecordAccumulator(int batchSize, int numPartitions) {
-        this(batchSize, numPartitions, DEFAULT_LINGER_MS);
+        this(batchSize, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
     }
 
+    /**
+     * Create a RecordAccumulator with custom batch size and linger time.
+     * Uses: custom batch size/linger, 30s timeout, 90% threshold, 32MB memory
+     * 
+     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
+     * @param numPartitions Number of partitions to manage batches for
+     * @param lingerMs Maximum time in milliseconds to wait before sending (0-60000ms)
+     */
     public RecordAccumulator(int batchSize, int numPartitions, long lingerMs) {
-        this(batchSize, numPartitions, lingerMs, DEFAULT_BUFFER_MEMORY);
+        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
     }
     
+    /**
+     * Create a RecordAccumulator with custom batch size, linger time, and buffer memory.
+     * Uses: custom batch size/linger/memory, 30s timeout, 90% threshold
+     * 
+     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
+     * @param numPartitions Number of partitions to manage batches for
+     * @param lingerMs Maximum time in milliseconds to wait before sending (0-60000ms)
+     * @param bufferMemory Total memory in bytes available for buffering (>= batchSize, max 1GB)
+     */
     public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long bufferMemory) {
-        this.batchSize = validateBatchSize(batchSize);
+        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, bufferMemory);
+    }
+    
+    /**
+     * Create a RecordAccumulator with full configuration control.
+     * 
+     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
+     * @param numPartitions Number of partitions to manage batches for
+     * @param lingerMs Maximum time in milliseconds to wait for additional records 
+     *                 before sending a batch (0-60000ms)
+     * @param batchTimeoutMs Maximum time in milliseconds a batch can exist before
+     *                       being forcibly sent, regardless of size (must be >= lingerMs, max 300000ms)
+     * @param batchSizeThreshold Percentage (0.0-1.0) of batch size that triggers sending
+     *                          (e.g., 0.9 = send when batch is 90% full)
+     * @param bufferMemory Total memory in bytes available for buffering
+     *                     (must be >= batchSize, max 1GB)
+     * @throws IllegalArgumentException if any parameter is invalid
+     */
+    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long batchTimeoutMs, double batchSizeThreshold, long bufferMemory) {
+        // Validate all configuration parameters
+        validateConfiguration(batchSize, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory);
+        
+        this.batchSize = batchSize;
         this.lingerMs = lingerMs;
+        this.batchTimeoutMs = batchTimeoutMs;
+        this.batchSizeThreshold = batchSizeThreshold;
         this.partitionBatches = new HashMap<>();
         this.numPartitions = numPartitions;
         
@@ -48,8 +133,8 @@ public class RecordAccumulator {
         // Initialize the callback registry
         this.callbackRegistry = new BatchCallbackRegistry();
         
-        Logger.info("RecordAccumulator initialized with BufferPool - Memory: {}MB, BatchSize: {}KB", 
-                   bufferMemory / (1024 * 1024), batchSize / 1024);
+        Logger.info("RecordAccumulator initialized - BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, SizeThreshold: {}, Memory: {}MB", 
+                   batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024));
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
@@ -142,13 +227,34 @@ public class RecordAccumulator {
 
     /**
      * Check if a batch is ready for sending
+     * A batch is ready if it has records AND meets any of these conditions:
+     * 1. Batch size exceeds the configured threshold (default 90%)
+     * 2. Batch has exceeded the linger time (immediate readiness after wait)
+     * 3. Batch has exceeded the maximum timeout (forced completion)
      */
     private boolean isBatchReady(RecordBatch batch) {
-        // Batch is ready if:
-        // 1. It has records AND (batch is 90% full OR has expired)
-        return batch.getRecordCount() > 0 && 
-               (batch.getCurrBatchSizeInBytes() >= (batchSize * 0.9) || 
-                batch.isExpired(lingerMs));
+        if (batch.getRecordCount() == 0) {
+            return false; // Never send empty batches
+        }
+        
+        // Check size threshold
+        if (batch.getCurrBatchSizeInBytes() >= (batchSize * batchSizeThreshold)) {
+            return true;
+        }
+        
+        // Check linger time expiration
+        if (batch.isExpired(lingerMs)) {
+            return true;
+        }
+        
+        // Check maximum batch timeout (force completion)
+        if (batch.isExpired(batchTimeoutMs)) {
+            Logger.warn("Batch {} exceeded maximum timeout ({}ms), forcing completion", 
+                       batch.getBatchId(), batchTimeoutMs);
+            return true;
+        }
+        
+        return false;
     }
 
     /**
@@ -260,8 +366,43 @@ public class RecordAccumulator {
         return new HashMap<>(partitionBatches); // Return copy to prevent external modification
     }
 
+    /**
+     * Get the configured batch size in bytes.
+     * 
+     * @return Maximum size in bytes for each batch
+     */
     public int getBatchSize() {
         return batchSize;
+    }
+    
+    /**
+     * Get the configured linger time in milliseconds.
+     * This is the maximum time to wait for additional records before sending a batch.
+     * 
+     * @return Linger time in milliseconds
+     */
+    public long getLingerMs() {
+        return lingerMs;
+    }
+    
+    /**
+     * Get the configured batch timeout in milliseconds.
+     * This is the maximum time a batch can exist before being forcibly sent.
+     * 
+     * @return Batch timeout in milliseconds
+     */
+    public long getBatchTimeoutMs() {
+        return batchTimeoutMs;
+    }
+    
+    /**
+     * Get the configured batch size threshold.
+     * This is the percentage of batch size that triggers sending (e.g., 0.9 = 90%).
+     * 
+     * @return Batch size threshold as a decimal between 0.0 and 1.0
+     */
+    public double getBatchSizeThreshold() {
+        return batchSizeThreshold;
     }
 
     public void printRecord() {
@@ -274,6 +415,17 @@ public class RecordAccumulator {
         });
     }
 
+    /**
+     * Validate all configuration parameters
+     */
+    private void validateConfiguration(int batchSize, long lingerMs, long batchTimeoutMs, double batchSizeThreshold, long bufferMemory) {
+        validateBatchSize(batchSize);
+        validateLingerMs(lingerMs);
+        validateBatchTimeoutMs(batchTimeoutMs, lingerMs);
+        validateBatchSizeThreshold(batchSizeThreshold);
+        validateBufferMemory(bufferMemory, batchSize);
+    }
+
     private int validateBatchSize(int batchSize) {
         final int MIN_BATCH_SIZE = 1; // Minimum size
         final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
@@ -284,6 +436,57 @@ public class RecordAccumulator {
             );
         }
         return batchSize;
+    }
+    
+    private void validateLingerMs(long lingerMs) {
+        final long MIN_LINGER_MS = 0; // No waiting
+        final long MAX_LINGER_MS = 60_000; // 1 minute max
+        
+        if (lingerMs < MIN_LINGER_MS || lingerMs > MAX_LINGER_MS) {
+            throw new IllegalArgumentException(
+                    "Linger time must be between " + MIN_LINGER_MS + "-" + MAX_LINGER_MS + " milliseconds."
+            );
+        }
+    }
+    
+    private void validateBatchTimeoutMs(long batchTimeoutMs, long lingerMs) {
+        final long MAX_BATCH_TIMEOUT_MS = 300_000; // 5 minutes max
+        
+        if (batchTimeoutMs < lingerMs) {
+            throw new IllegalArgumentException(
+                    "Batch timeout (" + batchTimeoutMs + "ms) must be greater than or equal to linger time (" + lingerMs + "ms)."
+            );
+        }
+        
+        if (batchTimeoutMs > MAX_BATCH_TIMEOUT_MS) {
+            throw new IllegalArgumentException(
+                    "Batch timeout must not exceed " + MAX_BATCH_TIMEOUT_MS + " milliseconds."
+            );
+        }
+    }
+    
+    private void validateBatchSizeThreshold(double batchSizeThreshold) {
+        if (batchSizeThreshold <= 0.0 || batchSizeThreshold > 1.0) {
+            throw new IllegalArgumentException(
+                    "Batch size threshold must be between 0.0 and 1.0 (exclusive of 0.0, inclusive of 1.0)."
+            );
+        }
+    }
+    
+    private void validateBufferMemory(long bufferMemory, int batchSize) {
+        final long MAX_BUFFER_MEMORY = 1_073_741_824L; // 1GB
+        
+        if (bufferMemory < batchSize) {
+            throw new IllegalArgumentException(
+                    "Buffer memory (" + bufferMemory + " bytes) must be at least as large as batch size (" + batchSize + " bytes)."
+            );
+        }
+        
+        if (bufferMemory > MAX_BUFFER_MEMORY) {
+            throw new IllegalArgumentException(
+                    "Buffer memory must not exceed " + MAX_BUFFER_MEMORY + " bytes (1GB)."
+            );
+        }
     }
     
     /**
