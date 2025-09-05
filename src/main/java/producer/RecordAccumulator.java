@@ -154,8 +154,6 @@ public class RecordAccumulator {
         for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
             RecordBatch batch = entry.getValue();
             
-            // Update batch state
-            batch.setState(BatchState.READY);
             // Track this batch as in-flight
             inflightBatches.put(batch.getBatchId(), batch);
             
@@ -188,7 +186,6 @@ public class RecordAccumulator {
             // Update batch states before clearing
             for (RecordBatch batch : batchesToFlush.values()) {
                 if (batch != null && batch.getRecordCount() > 0) {
-                    batch.setState(BatchState.READY);
                     // Track this batch as in-flight
                     inflightBatches.put(batch.getBatchId(), batch);
                 }
@@ -320,6 +317,56 @@ public class RecordAccumulator {
                 }
                 Logger.info("Record appended successfully to partition " + partition + ".");
             } catch (Exception e) {
+                Logger.error("Failed to append record: " + e.getMessage(), e);
+                throw e;
+            }
+        }
+    }
+    
+    /**
+     * Append a record with callback support and return future
+     * @param serializedRecord the serialized record data
+     * @param callback optional callback to invoke when record is sent
+     * @return RecordAppendResult containing future and batch information
+     */
+    public RecordAppendResult append(byte[] serializedRecord, Callback callback) throws IOException {
+        // Extract partition and topic from the serialized record
+        int partition = extractPartitionFromRecord(serializedRecord);
+        String topicName = extractTopicFromRecord(serializedRecord);
+        
+        RecordFuture future = new RecordFuture(callback);
+        boolean newBatchCreated = false;
+        boolean batchIsFull = false;
+        
+        synchronized (batchLock) {
+            RecordBatch currentBatch = partitionBatches.get(partition);
+            int baseOffset = 0; // TODO: Should be determined by broker/partition
+            
+            try {
+                boolean appended = currentBatch != null && currentBatch.append(serializedRecord, topicName, partition, future);
+                if (!appended) {
+                    if (currentBatch != null) { // Case 1B - batch is full
+                        Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
+                        batchIsFull = true;
+                    }
+                    Logger.info("Creating a new batch for partition " + partition + ".");
+                    currentBatch = createBatch(partition, baseOffset);
+                    partitionBatches.put(partition, currentBatch);
+                    newBatchCreated = true;
+                    
+                    if (!currentBatch.append(serializedRecord, topicName, partition, future)) {
+                        future.completeExceptionally(new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration."));
+                        throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
+                    }
+                    recordsAppended.incrementAndGet();
+                } else {
+                    recordsAppended.incrementAndGet();
+                }
+                Logger.info("Record appended successfully to partition " + partition + ".");
+                
+                return new RecordAppendResult(future, batchIsFull, newBatchCreated);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
                 Logger.error("Failed to append record: " + e.getMessage(), e);
                 throw e;
             }
@@ -511,7 +558,6 @@ public class RecordAccumulator {
     public void markBatchSending(String batchId) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
-            batch.setState(BatchState.SENDING);
             batch.setSentTime(System.currentTimeMillis());
             Logger.debug("Batch {} marked as SENDING", batchId);
         } else {
@@ -525,13 +571,25 @@ public class RecordAccumulator {
      * @param batchId The batch that was sent successfully
      */
     public void markBatchSuccess(String batchId) {
+        markBatchSuccess(batchId, 0L); // Default offset
+    }
+    
+    /**
+     * Mark a batch as successfully sent with specific offset
+     * 
+     * @param batchId The batch that was sent successfully
+     * @param baseOffset The base offset assigned by the broker
+     */
+    public void markBatchSuccess(String batchId, long baseOffset) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
-            batch.setState(BatchState.COMPLETED);
+            // Complete all futures in the batch
+            batch.complete(baseOffset);
+            
             batch.releaseBuffer(); // Release buffer back to pool
             inflightBatches.remove(batchId);
             batchesSent.incrementAndGet();
-            Logger.info("Batch {} completed successfully", batchId);
+            Logger.info("Batch {} completed successfully with base offset {}", batchId, baseOffset);
         } else {
             Logger.warn("Could not find batch {} to mark as successful", batchId);
         }
@@ -546,7 +604,10 @@ public class RecordAccumulator {
     public void markBatchFailure(String batchId, Throwable exception) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
-            batch.setState(BatchState.FAILED);
+            // Complete all futures in the batch with exception
+            batch.completeExceptionally(exception instanceof Exception ? 
+                (Exception) exception : new Exception(exception));
+            
             batch.releaseBuffer(); // Release buffer back to pool
             inflightBatches.remove(batchId);
             batchesFailed.incrementAndGet();

@@ -14,12 +14,12 @@ public class RecordBatch {
     private int numRecords;
     private ByteBuffer batch;
     private final List<RecordMetadata> recordMetadataList; // Store metadata for each record
+    private final List<RecordFuture> recordFutures; // Store futures for each record
     private final long createdTimeMs; // For batch timeout tracking
     private final BufferPool bufferPool; // Optional buffer pool for memory management
     private final boolean pooledBuffer; // Track if this buffer came from a pool
     
     private final String batchId; // Unique identifier for this batch
-    private volatile BatchState state; // Current state of the batch
     private volatile Long sentTimeMs; // Timestamp when batch was sent
     private volatile String topicName; // Primary topic for this batch
 
@@ -61,11 +61,11 @@ public class RecordBatch {
         this.numRecords = 0;
         this.bufferPool = bufferPool;
         this.recordMetadataList = new ArrayList<>();
+        this.recordFutures = new ArrayList<>();
         this.createdTimeMs = System.currentTimeMillis();
         
         // Initialize batch fields
         this.batchId = UUID.randomUUID().toString();
-        this.state = BatchState.CREATED;
         this.sentTimeMs = null;
         this.topicName = null;
         
@@ -104,13 +104,25 @@ public class RecordBatch {
     }
 
     /**
-     * Append a record with metadata to the batch
+     * Append a record with metadata to the batch (backward compatibility)
      * @param serializedRecord the serialized record data
      * @param topicName topic name for the record
      * @param partition partition for the record
      * @return true if record fits, false if batch is full
      */
     public boolean append(byte[] serializedRecord, String topicName, int partition) throws IOException {
+        return append(serializedRecord, topicName, partition, null);
+    }
+    
+    /**
+     * Append a record with metadata to the batch
+     * @param serializedRecord the serialized record data
+     * @param topicName topic name for the record
+     * @param partition partition for the record
+     * @param future the future to complete when the record is sent
+     * @return true if record fits, false if batch is full
+     */
+    public boolean append(byte[] serializedRecord, String topicName, int partition, RecordFuture future) throws IOException {
         // Check if record can fit in the current batch
         if (currBatchSizeInBytes + serializedRecord.length > maxBatchSizeInBytes) {
             Logger.warn("Record can not fit in current batch. New one may be necessary");
@@ -122,10 +134,13 @@ public class RecordBatch {
             this.topicName = topicName;
         }
         
-        // Store metadata for this record
+        // Store metadata and future for this record
         int offsetInBatch = currBatchSizeInBytes;
         RecordMetadata metadata = new RecordMetadata(topicName, partition, serializedRecord.length, offsetInBatch);
         recordMetadataList.add(metadata);
+        if (future != null) {
+            recordFutures.add(future);
+        }
         
         // Add record to batch
         batch.put(serializedRecord);
@@ -189,7 +204,6 @@ public class RecordBatch {
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
         System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
         System.out.println("Created: " + createdTimeMs + "ms ago");
-        System.out.println("State: " + state);
         System.out.println("Topic: " + topicName + "\n");
     }
     
@@ -202,29 +216,6 @@ public class RecordBatch {
         return batchId;
     }
     
-    /**
-     * Get the current state of this batch.
-     *
-     * @return Current batch state
-     */
-    public BatchState getState() {
-        return state;
-    }
-    
-    /**
-     * Set the state of this batch with validation.
-     *
-     * @param newState The new state to transition to
-     * @throws IllegalStateException if the transition is invalid
-     */
-    public void setState(BatchState newState) {
-        if (this.state != newState) {
-            this.state.validateTransition(newState);
-            BatchState oldState = this.state;
-            this.state = newState;
-            Logger.debug("Batch {} state changed from {} to {}", batchId, oldState, newState);
-        }
-    }
     
     /**
      * Get the topic name for this batch.
@@ -270,5 +261,38 @@ public class RecordBatch {
      */
     public boolean isPooledBuffer() {
         return pooledBuffer;
+    }
+    
+    /**
+     * Complete all futures in this batch with success
+     * @param baseOffset The base offset assigned by the broker
+     */
+    public void complete(long baseOffset) {
+        for (int i = 0; i < recordFutures.size(); i++) {
+            RecordFuture future = recordFutures.get(i);
+            RecordMetadata batchMetadata = recordMetadataList.get(i);
+            
+            // Create final RecordMetadata with the actual offset
+            producer.RecordMetadata finalMetadata = new producer.RecordMetadata(
+                batchMetadata.topicName,
+                batchMetadata.partition,
+                baseOffset + i, // Each record gets sequential offset
+                System.currentTimeMillis(),
+                -1, // serialized key size (unknown)
+                batchMetadata.recordLength
+            );
+            
+            future.complete(finalMetadata);
+        }
+    }
+    
+    /**
+     * Complete all futures in this batch with an exception
+     * @param exception The exception that occurred
+     */
+    public void completeExceptionally(Exception exception) {
+        for (RecordFuture future : recordFutures) {
+            future.completeExceptionally(exception);
+        }
     }
 }

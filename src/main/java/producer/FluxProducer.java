@@ -121,6 +121,57 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             throw e;
         }
     }
+    
+    /**
+     * Send a record asynchronously and return a future (convenience method without callback)
+     */
+    public Future<RecordMetadata> sendAsync(ProducerRecord record) throws IOException {
+        return sendAsync(record, null);
+    }
+    
+    @Override
+    public Future<RecordMetadata> sendAsync(ProducerRecord record, Callback callback) throws IOException {
+        Object key = record.getKey() == null ? "" : record.getKey();
+        Object value = record.getValue() == null ? "" : record.getValue();
+
+        int currentNumBrokerPartitions = cachedClusterMetadata
+                .get()
+                .brokers()
+                .get(bootstrapServer)
+                .numPartitions();
+
+        // Determine target partition, and then serialize.
+        int targetPartition = PartitionSelector.getPartitionNumberForRecord(
+                InMemoryTopicMetadataRepository.getInstance(),
+                record.getPartitionNumber(),
+                key.toString(),
+                record.getTopic(),
+                currentNumBrokerPartitions
+        );
+        System.out.println("Record has target partition = " + targetPartition);
+        
+        // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
+        byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
+
+        String topicName = record.getTopic();
+        if (topicName == null || topicName.isEmpty()) {
+            throw new IllegalArgumentException("Topic name is required for all records");
+        }
+        
+        // Use RecordAccumulator to append the serialized record with callback
+        try {
+            RecordAppendResult result = recordAccumulator.append(serializedData, callback);
+            Logger.info("Record appended to RecordAccumulator for partition " + targetPartition);
+            
+            // Check if we have any ready batches and send them
+            checkAndSendReadyBatches();
+            
+            return result.future;
+        } catch (IOException e) {
+            Logger.error("Failed to append record to RecordAccumulator: " + e.getMessage(), e);
+            throw e;
+        }
+    }
 
     // NOTE: ONLY USE THIS FOR TESTING
     public void forceFlush() {
