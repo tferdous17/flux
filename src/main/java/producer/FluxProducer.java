@@ -178,7 +178,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         
         // Notify accumulator that batches are being sent
         for (String batchId : batchIds) {
-            recordAccumulator.onBatchSending(batchId);
+            recordAccumulator.markBatchSending(batchId);
         }
 
         PublishDataToBrokerRequest request = PublishDataToBrokerRequest
@@ -220,7 +220,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 
                 // Notify accumulator of successful batch sends
                 for (String batchId : batchIds) {
-                    recordAccumulator.onBatchSendSuccess(batchId, response);
+                    recordAccumulator.markBatchSuccess(batchId);
                 }
             }
 
@@ -243,7 +243,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                     
                     // Notify accumulator of failed batch sends after all retries exhausted
                     for (String batchId : batchIds) {
-                        recordAccumulator.onBatchSendFailure(batchId, t);
+                        recordAccumulator.markBatchFailure(batchId, t);
                     }
                     
                     // TODO: Could implement dead letter queue or alerting here

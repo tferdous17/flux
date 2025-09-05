@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Batches producer records for efficient transmission.
@@ -31,7 +32,12 @@ public class RecordAccumulator {
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
-    private final BatchCallbackRegistry callbackRegistry; // Callback management
+    
+    // Simple metrics
+    private final AtomicLong batchesCreated = new AtomicLong(0);
+    private final AtomicLong batchesSent = new AtomicLong(0);
+    private final AtomicLong batchesFailed = new AtomicLong(0);
+    private final AtomicLong recordsAppended = new AtomicLong(0);
 
     /**
      * Create a RecordAccumulator with default configuration.
@@ -110,8 +116,6 @@ public class RecordAccumulator {
         long maxBlockTimeMs = 1000; // 1 second max wait for memory
         this.bufferPool = new BufferPool(bufferMemory, batchSize, maxBlockTimeMs);
         
-        // Initialize the callback registry
-        this.callbackRegistry = new BatchCallbackRegistry();
         
         Logger.info("RecordAccumulator initialized - BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, SizeThreshold: {}, Memory: {}MB", 
                    batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024));
@@ -122,15 +126,7 @@ public class RecordAccumulator {
         
         // Create batch with buffer pool support
         RecordBatch batch = new RecordBatch(batchSize, bufferPool);
-        
-        // Add default callbacks for resource management and logging
-        batch.addCallback(new BufferReleaseCallback());
-        batch.addCallback(new LoggingCallback());
-        
-        // Notify that batch was created
-        batch.notifyBatchCreated();
-        callbackRegistry.executeBatchCreatedCallbacks(batch.getBatchInfo());
-        
+        batchesCreated.incrementAndGet();
         return batch;
     }
 
@@ -158,10 +154,8 @@ public class RecordAccumulator {
         for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
             RecordBatch batch = entry.getValue();
             
-            // Update batch state and notify callbacks
+            // Update batch state
             batch.setState(BatchState.READY);
-            batch.notifyBatchReady();
-            callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
             // Track this batch as in-flight
             inflightBatches.put(batch.getBatchId(), batch);
             
@@ -191,12 +185,10 @@ public class RecordAccumulator {
             // Create a copy of current batches to return
             Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
             
-            // Update batch states and notify callbacks before clearing
+            // Update batch states before clearing
             for (RecordBatch batch : batchesToFlush.values()) {
                 if (batch != null && batch.getRecordCount() > 0) {
                     batch.setState(BatchState.READY);
-                    batch.notifyBatchReady();
-                    callbackRegistry.executeBatchReadyCallbacks(batch.getBatchInfo());
                     // Track this batch as in-flight
                     inflightBatches.put(batch.getBatchId(), batch);
                 }
@@ -309,7 +301,8 @@ public class RecordAccumulator {
             int baseOffset = 0; // TODO: Should be determined by broker/partition
             
             try {
-                if (currentBatch == null || !currentBatch.append(serializedRecord, topicName, partition)) {
+                boolean appended = currentBatch != null && currentBatch.append(serializedRecord, topicName, partition);
+                if (!appended) {
                     if (currentBatch != null) { // Case 1B - batch is full
                         Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
                         // Note: We don't auto-flush here, let the caller decide when to flush
@@ -321,6 +314,9 @@ public class RecordAccumulator {
                     if (!currentBatch.append(serializedRecord, topicName, partition)) {
                         throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
                     }
+                    recordsAppended.incrementAndGet();
+                } else {
+                    recordsAppended.incrementAndGet();
                 }
                 Logger.info("Record appended successfully to partition " + partition + ".");
             } catch (Exception e) {
@@ -508,81 +504,55 @@ public class RecordAccumulator {
     }
     
     /**
-     * Add a callback to be notified about batch lifecycle events.
-     *
-     * @param batchId The batch ID to register the callback for
-     * @param callback The callback to register
-     */
-    public void addBatchCallback(String batchId, BatchCallback callback) {
-        callbackRegistry.registerCallback(batchId, callback);
-    }
-    
-    /**
-     * Remove a callback for a specific batch.
-     *
-     * @param batchId The batch ID
-     * @param callback The callback to remove
-     * @return true if the callback was removed
-     */
-    public boolean removeBatchCallback(String batchId, BatchCallback callback) {
-        return callbackRegistry.unregisterCallback(batchId, callback);
-    }
-    
-    /**
-     * Notify callbacks that a batch is being sent.
+     * Mark a batch as being sent.
      *
      * @param batchId The batch being sent
      */
-    public void onBatchSending(String batchId) {
-        // Find the batch and update its state - use the common findBatchById method
+    public void markBatchSending(String batchId) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
             batch.setState(BatchState.SENDING);
             batch.setSentTime(System.currentTimeMillis());
-            batch.notifyBatchSending();
-            callbackRegistry.executeBatchSendingCallbacks(batch.getBatchInfo());
+            Logger.debug("Batch {} marked as SENDING", batchId);
         } else {
-            Logger.warn("Could not find batch {} for sending callback", batchId);
+            Logger.warn("Could not find batch {} to mark as sending", batchId);
         }
     }
     
     /**
-     * Notify callbacks that a batch has been successfully sent.
+     * Mark a batch as successfully sent and remove from inflight tracking.
      *
      * @param batchId The batch that was sent successfully
-     * @param result The broker acknowledgment/result
      */
-    public void onBatchSendSuccess(String batchId, Object result) {
-        // Find the batch and notify success
+    public void markBatchSuccess(String batchId) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
             batch.setState(BatchState.COMPLETED);
-            batch.notifyBatchSuccess(result);
-            callbackRegistry.executeBatchSuccessCallbacks(batch.getBatchInfo(), result);
-            // Remove from in-flight batches after successful completion
+            batch.releaseBuffer(); // Release buffer back to pool
             inflightBatches.remove(batchId);
+            batchesSent.incrementAndGet();
+            Logger.info("Batch {} completed successfully", batchId);
         } else {
-            Logger.warn("Could not find batch {} for success callback", batchId);
+            Logger.warn("Could not find batch {} to mark as successful", batchId);
         }
     }
     
     /**
-     * Notify callbacks that a batch has failed to send.
+     * Mark a batch as failed and remove from inflight tracking.
      *
      * @param batchId The batch that failed to send
      * @param exception The error that caused the failure
      */
-    public void onBatchSendFailure(String batchId, Throwable exception) {
-        // Find the batch and notify failure
+    public void markBatchFailure(String batchId, Throwable exception) {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
             batch.setState(BatchState.FAILED);
-            batch.notifyBatchFailure(exception);
-            callbackRegistry.executeBatchFailureCallbacks(batch.getBatchInfo(), exception);
-            // Remove from in-flight batches after failure
+            batch.releaseBuffer(); // Release buffer back to pool
             inflightBatches.remove(batchId);
+            batchesFailed.incrementAndGet();
+            Logger.error("Batch {} failed: {}", batchId, exception.getMessage());
         } else {
-            Logger.warn("Could not find batch {} for failure callback", batchId);
+            Logger.warn("Could not find batch {} to mark as failed", batchId);
         }
     }
     
@@ -609,15 +579,54 @@ public class RecordAccumulator {
     }
     
     /**
-     * Get callback registry statistics.
-     *
-     * @return String containing callback registry stats
+     * Get simple metrics for monitoring.
+     * 
+     * @return Metrics object with current stats
      */
-    public String getCallbackStats() {
-        return String.format("Callback Registry Stats - Batches: %d, Total Callbacks: %d, Active: %d",
-                           callbackRegistry.getBatchCount(),
-                           callbackRegistry.getTotalCallbackCount(),
-                           callbackRegistry.getActiveCallbackCount());
+    public AccumulatorMetrics getMetrics() {
+        return new AccumulatorMetrics(
+            batchesCreated.get(),
+            batchesSent.get(),
+            batchesFailed.get(),
+            recordsAppended.get(),
+            inflightBatches.size(),
+            bufferPool.availableMemory(),
+            bufferPool.totalMemory()
+        );
+    }
+    
+    /**
+     * Simple metrics class for monitoring.
+     */
+    public static class AccumulatorMetrics {
+        public final long batchesCreated;
+        public final long batchesSent;
+        public final long batchesFailed;
+        public final long recordsAppended;
+        public final int inflightBatches;
+        public final long availableMemory;
+        public final long totalMemory;
+        
+        public AccumulatorMetrics(long batchesCreated, long batchesSent, long batchesFailed,
+                                 long recordsAppended, int inflightBatches, 
+                                 long availableMemory, long totalMemory) {
+            this.batchesCreated = batchesCreated;
+            this.batchesSent = batchesSent;
+            this.batchesFailed = batchesFailed;
+            this.recordsAppended = recordsAppended;
+            this.inflightBatches = inflightBatches;
+            this.availableMemory = availableMemory;
+            this.totalMemory = totalMemory;
+        }
+        
+        @Override
+        public String toString() {
+            return String.format(
+                "Metrics[batches=(created=%d, sent=%d, failed=%d), records=%d, inflight=%d, memory=%d/%d]",
+                batchesCreated, batchesSent, batchesFailed, recordsAppended, 
+                inflightBatches, availableMemory, totalMemory
+            );
+        }
     }
     
     /**
@@ -641,10 +650,6 @@ public class RecordAccumulator {
             }
             inflightBatches.clear();
             
-            // Close the callback registry
-            if (callbackRegistry != null) {
-                callbackRegistry.shutdown();
-            }
             
             // Close the buffer pool
             if (bufferPool != null) {

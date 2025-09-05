@@ -7,7 +7,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 public class RecordBatch {
     private final int maxBatchSizeInBytes;
@@ -19,9 +18,7 @@ public class RecordBatch {
     private final BufferPool bufferPool; // Optional buffer pool for memory management
     private final boolean pooledBuffer; // Track if this buffer came from a pool
     
-    // Callback-related fields
     private final String batchId; // Unique identifier for this batch
-    private final List<BatchCallback> callbacks; // Thread-safe callback list
     private volatile BatchState state; // Current state of the batch
     private volatile Long sentTimeMs; // Timestamp when batch was sent
     private volatile String topicName; // Primary topic for this batch
@@ -66,9 +63,8 @@ public class RecordBatch {
         this.recordMetadataList = new ArrayList<>();
         this.createdTimeMs = System.currentTimeMillis();
         
-        // Initialize callback-related fields
+        // Initialize batch fields
         this.batchId = UUID.randomUUID().toString();
-        this.callbacks = new CopyOnWriteArrayList<>();
         this.state = BatchState.CREATED;
         this.sentTimeMs = null;
         this.topicName = null;
@@ -194,11 +190,8 @@ public class RecordBatch {
         System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
         System.out.println("Created: " + createdTimeMs + "ms ago");
         System.out.println("State: " + state);
-        System.out.println("Topic: " + topicName);
-        System.out.println("Callbacks: " + callbacks.size() + "\n");
+        System.out.println("Topic: " + topicName + "\n");
     }
-    
-    // ======================== Callback-related methods ========================
     
     /**
      * Get the unique identifier for this batch.
@@ -258,156 +251,6 @@ public class RecordBatch {
      */
     public Long getSentTimeMs() {
         return sentTimeMs;
-    }
-    
-    /**
-     * Add a callback to this batch.
-     *
-     * @param callback The callback to add
-     */
-    public void addCallback(BatchCallback callback) {
-        if (callback != null) {
-            callbacks.add(callback);
-            Logger.debug("Added callback to batch {}: {}", batchId, callback.getClass().getSimpleName());
-        }
-    }
-    
-    /**
-     * Remove a callback from this batch.
-     *
-     * @param callback The callback to remove
-     * @return true if the callback was removed
-     */
-    public boolean removeCallback(BatchCallback callback) {
-        if (callback != null) {
-            boolean removed = callbacks.remove(callback);
-            if (removed) {
-                Logger.debug("Removed callback from batch {}: {}", batchId, callback.getClass().getSimpleName());
-            }
-            return removed;
-        }
-        return false;
-    }
-    
-    /**
-     * Get a copy of the callback list.
-     *
-     * @return List of callbacks for this batch
-     */
-    public List<BatchCallback> getCallbacks() {
-        return new ArrayList<>(callbacks);
-    }
-    
-    /**
-     * Create a BatchInfo snapshot for this batch.
-     *
-     * @return Immutable BatchInfo representing current state
-     */
-    public BatchInfo getBatchInfo() {
-        return new BatchInfo(
-            batchId,
-            recordMetadataList.isEmpty() ? -1 : recordMetadataList.get(0).partition,
-            numRecords,
-            currBatchSizeInBytes,
-            createdTimeMs,
-            sentTimeMs,
-            topicName,
-            state
-        );
-    }
-    
-    /**
-     * Notify all registered callbacks about a batch created event.
-     */
-    public void notifyBatchCreated() {
-        if (!callbacks.isEmpty()) {
-            BatchInfo info = getBatchInfo();
-            Logger.debug("Notifying {} callbacks about batch created: {}", callbacks.size(), batchId);
-            
-            for (BatchCallback callback : callbacks) {
-                try {
-                    callback.onBatchCreated(info);
-                } catch (Exception e) {
-                    Logger.error("Callback failed for batch created {}: {}", batchId, e.getMessage(), e);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Notify all registered callbacks about a batch ready event.
-     */
-    public void notifyBatchReady() {
-        if (!callbacks.isEmpty()) {
-            BatchInfo info = getBatchInfo();
-            Logger.debug("Notifying {} callbacks about batch ready: {}", callbacks.size(), batchId);
-            
-            for (BatchCallback callback : callbacks) {
-                try {
-                    callback.onBatchReady(info);
-                } catch (Exception e) {
-                    Logger.error("Callback failed for batch ready {}: {}", batchId, e.getMessage(), e);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Notify all registered callbacks about a batch sending event.
-     */
-    public void notifyBatchSending() {
-        if (!callbacks.isEmpty()) {
-            BatchInfo info = getBatchInfo();
-            Logger.debug("Notifying {} callbacks about batch sending: {}", callbacks.size(), batchId);
-            
-            for (BatchCallback callback : callbacks) {
-                try {
-                    callback.onBatchSending(info);
-                } catch (Exception e) {
-                    Logger.error("Callback failed for batch sending {}: {}", batchId, e.getMessage(), e);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Notify all registered callbacks about a batch success event.
-     *
-     * @param result The broker acknowledgment/result
-     */
-    public void notifyBatchSuccess(Object result) {
-        if (!callbacks.isEmpty()) {
-            BatchInfo info = getBatchInfo();
-            Logger.debug("Notifying {} callbacks about batch success: {}", callbacks.size(), batchId);
-            
-            for (BatchCallback callback : callbacks) {
-                try {
-                    callback.onBatchSuccess(info, result);
-                } catch (Exception e) {
-                    Logger.error("Callback failed for batch success {}: {}", batchId, e.getMessage(), e);
-                }
-            }
-        }
-    }
-    
-    /**
-     * Notify all registered callbacks about a batch failure event.
-     *
-     * @param exception The error that caused the failure
-     */
-    public void notifyBatchFailure(Throwable exception) {
-        if (!callbacks.isEmpty()) {
-            BatchInfo info = getBatchInfo();
-            Logger.debug("Notifying {} callbacks about batch failure: {}", callbacks.size(), batchId);
-            
-            for (BatchCallback callback : callbacks) {
-                try {
-                    callback.onBatchFailure(info, exception);
-                } catch (Exception e) {
-                    Logger.error("Callback failed for batch failure {}: {}", batchId, e.getMessage(), e);
-                }
-            }
-        }
     }
     
     /**

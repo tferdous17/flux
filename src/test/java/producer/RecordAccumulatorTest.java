@@ -1,103 +1,106 @@
 package producer;
 
-import commons.header.Header;
-import commons.headers.Headers;
 import org.junit.jupiter.api.Test;
-import java.io.IOException;
-import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import static org.junit.jupiter.api.Assertions.*;
-import static producer.ProducerTestUtils.*;
 
+import java.io.IOException;
+
+/**
+ * Test the simplified RecordAccumulator without callbacks.
+ */
 public class RecordAccumulatorTest {
     
-    @Test
-    public void testAppend() throws IOException {
-        setupTestTopic("test-topic", 1);
-        
-        Headers headers = new Headers();
-        headers.add(new Header("key", "value".getBytes()));
-        ProducerRecord<String, String> record = new ProducerRecord<>(
-                "test-topic", 0, System.currentTimeMillis(), "key", "value", headers);
-        byte[] serializedData = serializeRecord(record);
-
-        RecordAccumulator accumulator = new RecordAccumulator(3);
-        accumulator.append(serializedData);
-        accumulator.printRecord();
+    private RecordAccumulator accumulator;
+    
+    @BeforeEach
+    void setUp() {
+        accumulator = new RecordAccumulator(1024, 3, 100);
     }
-
-    @Test
-    public void testCustomConfiguration() {
-        RecordAccumulator accumulator = new RecordAccumulator(
-            8192, 3, 200, 15000, 0.8, 16 * 1024 * 1024L);
-
-        assertEquals(8192, accumulator.getBatchSize());
-        assertEquals(200, accumulator.getLingerMs());
-        assertEquals(15000, accumulator.getBatchTimeoutMs());
-        assertEquals(0.8, accumulator.getBatchSizeThreshold(), 0.001);
-    }
-
-    @Test
-    public void testDefaultValues() {
-        RecordAccumulator accumulator = new RecordAccumulator(3);
-        
-        assertEquals(10240, accumulator.getBatchSize());
-        assertEquals(100, accumulator.getLingerMs());
-        assertEquals(30000, accumulator.getBatchTimeoutMs());
-        assertEquals(0.9, accumulator.getBatchSizeThreshold(), 0.001);
-    }
-
-    @Test
-    public void testValidConfiguration() {
-        assertDoesNotThrow(() -> 
-            new RecordAccumulator(1024, 3, 100, 30000, 0.9, 32 * 1024 * 1024L));
+    
+    @AfterEach
+    void tearDown() {
+        if (accumulator != null) {
+            accumulator.close();
+        }
     }
     
     @Test
-    public void testInvalidConfiguration() {
-        assertThrows(IllegalArgumentException.class, () ->
-            new RecordAccumulator(0, 3, 100, 30000, 0.9, 32 * 1024 * 1024L));
+    void testBatchCreationAndMetrics() throws IOException {
+        // Create a test record
+        ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-key", "test-value");
+        byte[] serializedRecord = ProducerRecordCodec.serialize(record, String.class, String.class);
         
-        assertThrows(IllegalArgumentException.class, () ->
-            new RecordAccumulator(1024, 3, 100, 30000, 1.1, 32 * 1024 * 1024L));
+        // Initial metrics should be zero
+        RecordAccumulator.AccumulatorMetrics metrics = accumulator.getMetrics();
+        assertEquals(0, metrics.batchesCreated);
+        assertEquals(0, metrics.recordsAppended);
+        assertEquals(0, metrics.batchesSent);
+        assertEquals(0, metrics.batchesFailed);
+        
+        // Append a record
+        accumulator.append(serializedRecord);
+        
+        // Check metrics after append
+        metrics = accumulator.getMetrics();
+        assertEquals(1, metrics.batchesCreated);
+        assertEquals(1, metrics.recordsAppended);
+        assertEquals(0, metrics.batchesSent);
+        
+        // Get the batch
+        RecordBatch batch = accumulator.getCurrentBatch(0);
+        assertNotNull(batch);
+        assertEquals(BatchState.CREATED, batch.getState());
+        
+        // Flush and mark as sent
+        var flushed = accumulator.flush();
+        assertFalse(flushed.isEmpty());
+        
+        String batchId = batch.getBatchId();
+        accumulator.markBatchSending(batchId);
+        assertEquals(BatchState.SENDING, batch.getState());
+        
+        accumulator.markBatchSuccess(batchId);
+        
+        // Check final metrics
+        metrics = accumulator.getMetrics();
+        assertEquals(1, metrics.batchesCreated);
+        assertEquals(1, metrics.recordsAppended);
+        assertEquals(1, metrics.batchesSent);
+        assertEquals(0, metrics.batchesFailed);
     }
-
+    
     @Test
-    public void testBatchThreshold() throws IOException {
-        setupTestTopic("threshold-topic", 1);
+    void testBatchFailureMetrics() throws IOException {
+        ProducerRecord<String, String> record = new ProducerRecord<>("test-topic", "test-key", "test-value");
+        byte[] serializedRecord = ProducerRecordCodec.serialize(record, String.class, String.class);
         
-        RecordAccumulator accumulator = new RecordAccumulator(1000, 1, 5000, 10000, 0.5, 32 * 1024 * 1024L);
+        accumulator.append(serializedRecord);
+        RecordBatch batch = accumulator.getCurrentBatch(0);
+        String batchId = batch.getBatchId();
         
-        ProducerRecord<String, String> record = new ProducerRecord<>(
-            "threshold-topic", 0, System.currentTimeMillis(), "key", "a".repeat(200), new Headers());
-        byte[] serializedData = serializeRecord(record);
+        var flushed = accumulator.flush();
+        assertFalse(flushed.isEmpty());
         
-        accumulator.append(serializedData);
-        Map<Integer, RecordBatch> firstCheck = accumulator.getReadyBatches();
-        assertTrue(firstCheck.isEmpty());
+        // Mark as failed
+        accumulator.markBatchFailure(batchId, new RuntimeException("Test failure"));
         
-        accumulator.append(serializedData);
-        
-        // Add more records to ensure we exceed the 50% threshold (500 bytes)
-        accumulator.append(serializedData);
-        
-        Map<Integer, RecordBatch> secondCheck = accumulator.getReadyBatches();
-        assertFalse(secondCheck.isEmpty());
+        // Check metrics
+        RecordAccumulator.AccumulatorMetrics metrics = accumulator.getMetrics();
+        assertEquals(1, metrics.batchesCreated);
+        assertEquals(1, metrics.recordsAppended);
+        assertEquals(0, metrics.batchesSent);
+        assertEquals(1, metrics.batchesFailed);
     }
-
+    
     @Test
-    public void testBatchTimeout() throws IOException, InterruptedException {
-        setupTestTopic("timeout-topic", 1);
+    void testMetricsToString() {
+        RecordAccumulator.AccumulatorMetrics metrics = accumulator.getMetrics();
+        String metricsStr = metrics.toString();
         
-        RecordAccumulator accumulator = new RecordAccumulator(1000, 1, 50, 100, 0.9, 32 * 1024 * 1024L);
-        
-        ProducerRecord<String, String> record = new ProducerRecord<>(
-            "timeout-topic", 0, System.currentTimeMillis(), "key", "small", new Headers());
-        byte[] serializedData = serializeRecord(record);
-        
-        accumulator.append(serializedData);
-        assertTrue(accumulator.getReadyBatches().isEmpty());
-        
-        Thread.sleep(150);
-        assertFalse(accumulator.getReadyBatches().isEmpty());
+        assertTrue(metricsStr.contains("batches=(created=0, sent=0, failed=0)"));
+        assertTrue(metricsStr.contains("records=0"));
+        assertTrue(metricsStr.contains("inflight=0"));
     }
 }
