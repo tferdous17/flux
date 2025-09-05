@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentMap;
  * using the Repository pattern. Down the line we will refactor to more closely align with Kafka's implementation.
  *
  * This is a Bill Pugh Singleton -- it loads the SingletonHelper and subsequently creates the InMemoryTopicMetadataRepository instance
- * itself *only* when someone calls getInstance(). Avoids needing to do manual synchronization for multithreaded scenarios.
+ * itself *only* when someone calls getInstance(). Avoids needing to do manual synchronization for multithreaded scenarios (only on calling getInstance()).
  */
 public class InMemoryTopicMetadataRepository implements TopicMetadataRepository {
     private ConcurrentMap<String, FluxTopic> topicMetadata = new ConcurrentHashMap<>();

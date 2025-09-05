@@ -6,8 +6,22 @@ option java_package = "proto";
 option java_multiple_files = true;
 
 service ControllerService {
+  rpc UpdateBrokerMetadata(UpdateBrokerMetadataRequest) returns (UpdateBrokerMetadataResponse);
   rpc RegisterBroker(BrokerRegistrationRequest) returns (BrokerRegistrationResult);
   rpc DecommissionBroker(DecommissionBrokerRequest) returns (DecommissionBrokerResult);
+}
+
+message UpdateBrokerMetadataRequest {
+  string broker_id = 1;
+  string host = 2;
+  uint32 port_number = 3;
+  uint32 num_partitions = 4;
+  map<uint32, PartitionDetails> partition_details = 5;
+}
+
+message UpdateBrokerMetadataResponse {
+  string acknowledgement = 1;
+  Status status = 2;
 }
 
 message BrokerRegistrationRequest {

@@ -9,10 +9,10 @@ import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import metadata.BrokerMetadataSnapshot;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import metadata.MetadataListener;
+import metadata.snapshots.ClusterSnapshot;
 import org.tinylog.Logger;
 import proto.*;
 
@@ -30,8 +30,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
     private RecordAccumulator recordAccumulator;
-    private final Metadata metadata;
-    private AtomicReference<BrokerMetadataSnapshot> cachedBrokerMetadata; // read-heavy
+    private AtomicReference<ClusterSnapshot> cachedClusterMetadata; // read-heavy
     private final int maxRetries;
     private final long retryBackoffMs;
 
@@ -51,12 +50,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 .getSchedulerService()
                 .scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
 
-        metadata = new Metadata(60);
-        cachedBrokerMetadata = metadata.getBrokerMetadataSnapshot();
-        metadata.addListener(this);
+        cachedClusterMetadata = Metadata.getInstance().getClusterMetadataSnapshot();
+        Metadata.getInstance().addListener(this);
         
         // Initialize configuration from properties
-        int numPartitions = cachedBrokerMetadata.get().getNumPartitions();
+        int numPartitions = cachedClusterMetadata.get().brokers().get(bootstrapServer).numPartitions();
         int batchSize = Integer.parseInt(props.getProperty("batch.size", "10240")); // 10KB default
         long lingerMs = Long.parseLong(props.getProperty("linger.ms", "100")); // 100ms default
         long batchTimeoutMs = Long.parseLong(props.getProperty("batch.timeout.ms", "30000")); // 30s default
@@ -80,7 +78,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     public void printMetadataForTesting() {
-        System.out.println(cachedBrokerMetadata);
+        System.out.println(cachedClusterMetadata);
     }
 
     @Override
@@ -88,7 +86,12 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
-        int currentNumBrokerPartitions = cachedBrokerMetadata.get().getNumPartitions();
+        int currentNumBrokerPartitions = cachedClusterMetadata
+                .get()
+                .brokers()
+                .get(bootstrapServer)
+                .numPartitions();
+
 
         // Determine target partition, and then serialize.
         int targetPartition = PartitionSelector.getPartitionNumberForRecord(
@@ -187,6 +190,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                                 .newBuilder()
                                 .setTargetPartition(r.targetPartition())
                                 .setData(ByteString.copyFrom(r.data()))
+//                                .setTopic(r.topicName())  TODO: fix this too
                                 .build()
                         )
                         .toList()
@@ -257,16 +261,16 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     @Override
-    public void onUpdate(AtomicReference<BrokerMetadataSnapshot> newSnapshot) {
+    public void onUpdate(AtomicReference<ClusterSnapshot> newSnapshot) {
         // Using an AtomicReference allows us to take advantage of hardware-level instructions, such as compare_and_swap,
         // to ensure thread safety on our metadata cache while avoiding the use of locks
         // (because locking can incur overhead and dampen performance a bit in multithreaded environments)
-        BrokerMetadataSnapshot oldSnapshot = cachedBrokerMetadata.get();
-        cachedBrokerMetadata.set(newSnapshot.get());
+        ClusterSnapshot oldSnapshot = cachedClusterMetadata.get();
+        cachedClusterMetadata.set(newSnapshot.get());
         
         // Check if partition count changed - if so, we may need to flush current batches
-        int oldPartitions = oldSnapshot.getNumPartitions();
-        int newPartitions = newSnapshot.get().getNumPartitions();
+        int oldPartitions = oldSnapshot.brokers().get(bootstrapServer).numPartitions();
+        int newPartitions = newSnapshot.get().brokers().get(bootstrapServer).numPartitions();
         
         if (oldPartitions != newPartitions) {
             Logger.info("Partition count changed from {} to {} - flushing current batches", 

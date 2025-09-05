@@ -11,6 +11,8 @@ import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
+import metadata.snapshots.BrokerMetadata;
+import metadata.snapshots.PartitionMetadata;
 import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
@@ -19,8 +21,10 @@ import server.internal.storage.Partition;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Broker implements Controller {
     private String brokerId;
@@ -32,8 +36,11 @@ public class Broker implements Controller {
     private final PartitionWriteManager writeManager;
 
     private boolean isActiveController = false;
+    private String clusterId = ""; // that this controller belongs to
     private String controllerEndpoint = ""; // "localhost:50051"
     private Map<String, String> followerNodeEndpoints = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker address>
+    private AtomicReference<BrokerMetadata> controllerMetadata = new AtomicReference<>();
+    private Map<String, BrokerMetadata> cachedFollowerMetadata = Collections.synchronizedMap(new HashMap<>()); // <broker id, broker metadata obj>
     private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
     private ManagedChannel channel;
     private ShutdownCallback shutdownCallback;
@@ -47,6 +54,10 @@ public class Broker implements Controller {
         this.numPartitions = 0; // Start with 0 partitions, they'll be created with topics
         this.topicPartitions = new ConcurrentHashMap<>();
         this.writeManager = new PartitionWriteManager();
+
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::updateBrokerMetadata, 80, 180, TimeUnit.SECONDS);
     }
 
     public Broker(String brokerId, String host, int port) throws IOException {
@@ -167,6 +178,76 @@ public class Broker implements Controller {
         }
     }
 
+    // Initializes the controller's metadata before other brokers in the cluster
+    public void initControllerBrokerMetadata() {
+        if (!isActiveController) {
+            return;
+        }
+
+        Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
+        // TODO: BROKEN VIA MERGE CONFLICT -- GOING TO PURPOSELY FIX IN SEPARATE PR
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
+
+        this.controllerMetadata.set(new BrokerMetadata(
+                this.brokerId,
+                this.host,
+                this.port,
+                this.numPartitions,
+                partitionMetadataMap
+        ));
+    }
+
+    public void updateBrokerMetadata() {
+        // Periodically the broker will send its most up-to-date metadata to the Controller node
+        Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
+        // TODO: SAME AS ABOVE TODO
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
+        if (!isActiveController) {
+            UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
+                    .newBuilder()
+                    .setBrokerId(this.brokerId)
+                    .setHost(this.host)
+                    .setPortNumber(this.port)
+                    .setNumPartitions(this.numPartitions)
+                    .putAllPartitionDetails(PartitionMetadata.toDetailsMapProto(partitionMetadataMap))
+                    .build();
+
+            // Send off request to controller and await response
+            ListenableFuture<UpdateBrokerMetadataResponse> response = futureStub.updateBrokerMetadata(request);
+            Futures.addCallback(response, new FutureCallback<UpdateBrokerMetadataResponse>() {
+
+                @Override
+                public void onSuccess(UpdateBrokerMetadataResponse result) {
+                   Logger.info(result.getAcknowledgement());
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    Logger.error(t);
+                }
+            }, FluxExecutor.getExecutorService());
+        } else {
+            // Keep controller's metadata up-to-date as well
+            this.controllerMetadata.set(new BrokerMetadata(
+                    this.brokerId,
+                    this.host,
+                    this.port,
+                    this.numPartitions,
+                    partitionMetadataMap
+            ));
+        }
+    }
+
     @Override
     public void processBrokerHeartbeat() {
         if (!isActiveController) {
@@ -262,7 +343,7 @@ public class Broker implements Controller {
         if (topicPartitions.isEmpty()) {
             throw new IllegalStateException("No topics available - consumer must subscribe to a topic first");
         }
-        
+
         String firstTopicName = topicPartitions.keySet().iterator().next();
         // TODO: Replace placeholder partitionID - using partition 0 as default
         return consumeMessage(firstTopicName, 0, startingOffset);
@@ -278,8 +359,6 @@ public class Broker implements Controller {
         Partition targetPartition = getPartitionForTopic(topicName, partitionId);
         return targetPartition.getRecordAtOffset(startingOffset);
     }
-
-
 
     public String getBrokerId() {
         return brokerId;
@@ -352,7 +431,19 @@ public class Broker implements Controller {
         return this.controllerEndpoint;
     }
 
+    public void setClusterId(String clusterId) {
+        this.clusterId = clusterId;
+    }
+
     public Map<String, String> getFollowerNodeEndpoints() {
         return followerNodeEndpoints;
+    }
+
+    public Map<String, BrokerMetadata> getCachedFollowerMetadata() {
+        return cachedFollowerMetadata;
+    }
+
+    public AtomicReference<BrokerMetadata> getControllerMetadata() {
+        return controllerMetadata;
     }
 }
