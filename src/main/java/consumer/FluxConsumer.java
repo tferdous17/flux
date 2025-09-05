@@ -136,9 +136,14 @@ public class FluxConsumer<K, V> implements Consumer {
     @Override
     public PollResult poll(Duration timeout) {
         List<ConsumerRecord<String, String>> records = new ArrayList<>();
+        // Use the first subscribed topic for now - TODO: implement proper topic/partition polling
+        String topicName = subscribedTopics.isEmpty() ? "default-topic" : subscribedTopics.iterator().next();
+        
         FetchMessageRequest req = FetchMessageRequest
                 .newBuilder()
                 .setStartingOffset(currentOffset)
+                .setPartitionId(0) // TODO: use actual assigned partition
+                .setTopic(topicName)
                 .build();
 
         try {

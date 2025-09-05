@@ -75,6 +75,7 @@ public class ConsumerServiceTest {
     private static void clientPollTest() {
         warmup();
         FluxConsumer<String, String> consumer = new FluxConsumer<>();
+        consumer.subscribe(java.util.List.of("topic")); // Subscribe to the same topic the producer uses
 
         // refer to KafkaConsumer for why the test is structured like this
         // note: kafka does not have a defined way to stop polling, but flux does for convenience purposes

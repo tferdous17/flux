@@ -16,6 +16,7 @@ message PublishDataToBrokerRequest {
 message Record {
   int32 target_partition = 1;
   bytes data = 2;
+  string topic = 3;
 }
 
 message BrokerToPublisherAck {

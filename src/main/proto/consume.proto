@@ -12,6 +12,7 @@ service ConsumerService {
 message FetchMessageRequest {
   int32 partition_id = 1;
   int32 starting_offset = 2;
+  string topic = 3;
 }
 
 message FetchMessageResponse {
