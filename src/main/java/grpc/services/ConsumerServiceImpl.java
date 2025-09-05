@@ -18,11 +18,12 @@ public class ConsumerServiceImpl extends ConsumerServiceGrpc.ConsumerServiceImpl
         FetchMessageResponse.Builder responseBuilder = FetchMessageResponse.newBuilder();
         int nextOffset = req.getStartingOffset() + 1;
         try {
-            String topic = req.getTopic();
-            if (topic == null || topic.isEmpty()) {
-                throw new IllegalArgumentException("Topic name is required");
-            }
-            Message msg = this.broker.consumeMessage(topic, req.getPartitionId(), req.getStartingOffset());
+            // TODO: fix this when possible spidey
+//            String topic = req.getTopic();
+//            if (topic == null || topic.isEmpty()) {
+//                throw new IllegalArgumentException("Topic name is required");
+//            }
+            Message msg = this.broker.consumeMessage("topic", req.getPartitionId(), req.getStartingOffset());
             if (msg != null) {
                 responseBuilder
                         .setMessage(msg)

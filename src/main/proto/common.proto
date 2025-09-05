@@ -16,3 +16,9 @@ enum Status {
 message Timestamp {
   int64 milliseconds = 1;
 }
+
+// Both the metadata and controller service use this
+message PartitionDetails {
+  uint32 partition_id = 1;
+  string broker_id = 2;
+}

@@ -40,6 +40,7 @@ public class Cluster {
         controllerNode.setIsActiveController(true);
         String controllerEndpoint = "%s:%d".formatted(bootstrapServerAddrs.get(0).getHostName(), bootstrapServerAddrs.get(0).getPort());
         controllerNode.setControllerEndpoint(controllerEndpoint);
+        controllerNode.setClusterId(this.clusterId);
 
         if (nodes.size() > 1) {
             // All other nodes must then store the controller node's endpoint in order to make further requests,
@@ -49,6 +50,8 @@ public class Cluster {
                 node.setControllerEndpoint(controllerNode.getControllerEndpoint());
             }
         }
+
+        controllerNode.initControllerBrokerMetadata();
     }
 
     // Fire up each server, ready for requests.
@@ -77,7 +80,7 @@ public class Cluster {
                             try {
                                 server.start(b.getPort());
                                 // Once each server is started, it will immediately make a BrokerRegistrationRequest to the controller
-                                b.registerBroker();
+                                b.registerBroker(); // initial metadata state is handled here too
                             } catch (IOException e) {
                                 throw new RuntimeException(e);
                             }
@@ -88,5 +91,17 @@ public class Cluster {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public String getClusterId() {
+        return clusterId;
+    }
+
+    public List<Broker> getNodes() {
+        return nodes;
+    }
+
+    public Broker getControllerNode() {
+        return controllerNode;
     }
 }
