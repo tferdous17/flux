@@ -7,49 +7,63 @@ import commons.FluxExecutor;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
+import metadata.snapshots.BrokerMetadata;
+import metadata.snapshots.ClusterSnapshot;
+import metadata.snapshots.ControllerMetadata;
+import metadata.snapshots.TopicMetadata;
 import org.tinylog.Logger;
-import proto.FetchBrokerMetadataRequest;
-import proto.FetchBrokerMetadataResponse;
-import proto.MetadataServiceGrpc;
+import proto.*;
 
 import java.util.ArrayList;
 import java.util.List;
+
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Encapsulates the logic around metadata
+ * Singleton that encapsulates the logic around metadata
  *
  * Utilizes the Observer pattern to notify clients (producers/consumers) of any changes in metadata.
  */
 public class Metadata {
     private int refreshIntervalSec;
     private int updateCounter;
-    private AtomicReference<BrokerMetadataSnapshot> currBrokerMetadataSnapshot; // Cached metadata snapshot
     private ManagedChannel channel;
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private List<MetadataListener> listeners = new ArrayList<>();
     public static AtomicInteger brokerIdCounter = new AtomicInteger(1);
     public static AtomicInteger clusterIdCounter = new AtomicInteger(1);
+    private AtomicReference<ClusterSnapshot> currClusterMetadataSnapshot; // Cached cluster metadata
 
-    public Metadata(int refreshIntervalSec) {
+    private Metadata(int refreshIntervalSec) {
         this.refreshIntervalSec = refreshIntervalSec;
         updateCounter = 0;
+        // Note: Metadata client should only connect to the Controller node
         channel = Grpc.newChannelBuilder("localhost:50051", InsecureChannelCredentials.create()).build();
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
 
-        currBrokerMetadataSnapshot = new AtomicReference<>(initialMetadataFetch()); // This is blocking
+        currClusterMetadataSnapshot = new AtomicReference<>(initialMetadataFetch()); // ! This is blocking
 
-        System.out.println(currBrokerMetadataSnapshot);
+        System.out.println("PRINTING CURR CLUSTER METADATA-------------------------");
+        System.out.println(currClusterMetadataSnapshot);
+        System.out.println("--------------------------------------------------");
         FluxExecutor
                 .getSchedulerService()
                 .scheduleWithFixedDelay(this::updateMetadata, refreshIntervalSec, refreshIntervalSec, TimeUnit.SECONDS);
     }
 
-    public Metadata() {
-        this(300); // default = 5 minutes
+    private Metadata() {
+        this(100); // default = 5 minutes
+    }
+
+    private static class SingletonHelper {
+        private static final Metadata INSTANCE = new Metadata();
+    }
+
+    public static Metadata getInstance() {
+        return SingletonHelper.INSTANCE;
     }
 
     // Synchronize (mutex) the listeners so there aren't any inconsistencies
@@ -73,56 +87,60 @@ public class Metadata {
         Logger.info("METADATA CHANGE DETECTED -- NOTIFYING + UPDATING ALL LISTENERS");
         synchronized (listeners) {
             for (MetadataListener listener : listeners) {
-                listener.onUpdate(currBrokerMetadataSnapshot);
+                listener.onUpdate(currClusterMetadataSnapshot);
             }
         }
     }
 
     // Get the current metadata
-    public AtomicReference<BrokerMetadataSnapshot> getBrokerMetadataSnapshot() {
-        return currBrokerMetadataSnapshot;
+    public AtomicReference<ClusterSnapshot> getClusterMetadataSnapshot() {
+        return currClusterMetadataSnapshot;
     }
 
-    private BrokerMetadataSnapshot initialMetadataFetch() {
-        FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
+    private ClusterSnapshot initialMetadataFetch() {
+        FetchClusterMetadataRequest request = FetchClusterMetadataRequest.newBuilder().build();
         try {
-            FetchBrokerMetadataResponse response = metadataFutureStub
-                    .fetchBrokerMetadata(request)
+            // Initial fetch will be blocking as to ensure metadata is fully loaded before its used by Producers or Consumers
+            FetchClusterMetadataResponse response = metadataFutureStub
+                    .fetchClusterMetadata(request)
                     .get();
 
-            return new BrokerMetadataSnapshot(
-                    response.getBrokerId(),
-                    response.getHost(),
-                    response.getPortNumber(),
-                    response.getNumPartitions()
+            return new ClusterSnapshot(
+                    ControllerMetadata.from(response.getControllerDetails()),
+                    BrokerMetadata.fromMap(response.getBrokerDetailsMap()),
+                    TopicMetadata.fromMap(response.getTopicDetailsMap())
             );
+
         } catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
+    // Metadata obj will specifically do PULL based metadata fetching from the controller node(s)
     private void updateMetadata() {
-        Logger.info("REFRESHING METADATA SNAPSHOT");
+        Logger.info("REFRESHING CLUSTER METADATA SNAPSHOT");
 
-        FetchBrokerMetadataRequest request = FetchBrokerMetadataRequest.newBuilder().build();
-        ListenableFuture<FetchBrokerMetadataResponse> future = metadataFutureStub.fetchBrokerMetadata(request);
+        FetchClusterMetadataRequest request = FetchClusterMetadataRequest.newBuilder().build();
+        ListenableFuture<FetchClusterMetadataResponse> future = metadataFutureStub.fetchClusterMetadata(request);
 
-        Futures.addCallback(future, new FutureCallback<FetchBrokerMetadataResponse>() {
+        Futures.addCallback(future, new FutureCallback<FetchClusterMetadataResponse>() {
+
             @Override
-            public void onSuccess(FetchBrokerMetadataResponse response) {
-                BrokerMetadataSnapshot newSnapshot = new BrokerMetadataSnapshot(
-                        response.getBrokerId(),
-                        response.getHost(),
-                        response.getPortNumber(),
-                        response.getNumPartitions()
+            public void onSuccess(FetchClusterMetadataResponse response) {
+                ClusterSnapshot newSnapshot = new ClusterSnapshot(
+                        ControllerMetadata.from(response.getControllerDetails()),
+                        BrokerMetadata.fromMap(response.getBrokerDetailsMap()),
+                        TopicMetadata.fromMap(response.getTopicDetailsMap())
                 );
-                if (!newSnapshot.equals(currBrokerMetadataSnapshot.get())) {
-                    currBrokerMetadataSnapshot.set(newSnapshot);
+
+                if (!newSnapshot.equals(currClusterMetadataSnapshot.get())) {
+                    currClusterMetadataSnapshot.set(newSnapshot);
                     updateCounter++;
                     notifyListeners();
-                    Logger.info("SUCCESSFULLY REFRESHED CACHED BROKER METADATA, UPDATE COUNT = %d".formatted(updateCounter));
+                    Logger.info("SUCCESSFULLY REFRESHED CACHED CLUSTER METADATA, UPDATE COUNT = %d".formatted(updateCounter));
+                    System.out.println(currClusterMetadataSnapshot);
                 } else {
-                    Logger.info("NO NEW CHANGES IN METADATA DETECTED");
+                    Logger.info("NO NEW CHANGES IN CLUSTER METADATA DETECTED");
                 }
             }
 
@@ -130,7 +148,6 @@ public class Metadata {
             public void onFailure(Throwable t) {
                 Logger.error(t);
             }
-
         }, FluxExecutor.getExecutorService());
     }
 
