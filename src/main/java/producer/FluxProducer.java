@@ -122,7 +122,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                                 .newBuilder()
                                 .setTargetPartition(r.targetPartition())
                                 .setData(ByteString.copyFrom(r.data()))
-                                .setTopic(r.topicName())
+//                                .setTopic(r.topicName())  TODO: fix this too
                                 .build()
                         )
                         .toList()
