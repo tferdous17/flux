@@ -25,11 +25,17 @@ public class ProducerServiceImpl extends PublishToBrokerGrpc.PublishToBrokerImpl
         List<IntermediaryRecord> records = req
                 .getRecordsList()
                 .stream()
-                .map(record -> new IntermediaryRecord(
-                                record.getTargetPartition(),
-                                record.getData().toByteArray()
-                        )
-                )
+                .map(record -> {
+                    String topic = record.getTopic();
+                    if (topic == null || topic.isEmpty()) {
+                        throw new IllegalArgumentException("Topic name is required for all records");
+                    }
+                    return new IntermediaryRecord(
+                            topic,
+                            record.getTargetPartition(),
+                            record.getData().toByteArray()
+                    );
+                })
                 .toList();
 
         try {
