@@ -184,10 +184,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     /**
-     * Check for ready batches and send them if any exist
+     * Check for ready batches and send them if any exist.
+     * Uses the drain() method to properly remove ready batches from the accumulator.
      */
     private void checkAndSendReadyBatches() {
-        Map<Integer, RecordBatch> readyBatches = recordAccumulator.getReadyBatches();
+        Map<Integer, RecordBatch> readyBatches = recordAccumulator.drain();
         if (!readyBatches.isEmpty()) {
             sendBatches(readyBatches, "READY BATCH SEND");
         }

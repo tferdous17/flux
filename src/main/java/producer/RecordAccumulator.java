@@ -131,13 +131,21 @@ public class RecordAccumulator {
     }
 
     /**
-     * Get batches that are ready for sending based on size or time
-     * @return Map of partition to RecordBatch for ready batches
+     * Drain ready batches from the accumulator for sending.
+     * This method identifies batches that are ready for transmission, removes them from
+     * the accumulator, and tracks them as in-flight. This follows Kafka's drain pattern.
+     * 
+     * A batch is considered ready if:
+     * - Its size exceeds the configured threshold, OR
+     * - It has exceeded the linger time, OR  
+     * - It has exceeded the maximum batch timeout
+     * 
+     * @return Map of partition to RecordBatch for batches ready to send
      */
-    public Map<Integer, RecordBatch> getReadyBatches() {
-        Map<Integer, RecordBatch> readyBatches = new ConcurrentHashMap<>();
+    public Map<Integer, RecordBatch> drain() {
+        Map<Integer, RecordBatch> drainedBatches = new ConcurrentHashMap<>();
         
-        // First pass: identify ready batches (thread-safe iteration)
+        // First pass: identify and atomically remove ready batches
         for (Map.Entry<Integer, RecordBatch> entry : partitionBatches.entrySet()) {
             int partition = entry.getKey();
             RecordBatch batch = entry.getValue();
@@ -145,30 +153,45 @@ public class RecordAccumulator {
             if (batch != null && isBatchReady(batch)) {
                 // Atomically remove from partitionBatches if still present
                 if (partitionBatches.remove(partition, batch)) {
-                    readyBatches.put(partition, batch);
+                    drainedBatches.put(partition, batch);
                 }
             }
         }
         
-        // Second pass: update states and notify callbacks (no lock needed)
-        for (Map.Entry<Integer, RecordBatch> entry : readyBatches.entrySet()) {
+        // Second pass: track drained batches as in-flight
+        for (Map.Entry<Integer, RecordBatch> entry : drainedBatches.entrySet()) {
             RecordBatch batch = entry.getValue();
-            
-            // Track this batch as in-flight
             inflightBatches.put(batch.getBatchId(), batch);
-            
-            // Note: Buffer release will be handled after the batch is sent
         }
         
-        if (!readyBatches.isEmpty()) {
-            Logger.info("Found " + readyBatches.size() + " ready batches");
+        if (!drainedBatches.isEmpty()) {
+            Logger.info("Drained {} ready batches for sending", drainedBatches.size());
         }
         
-        return readyBatches;
+        return drainedBatches;
+    }
+    
+    /**
+     * Get batches that are ready for sending based on size or time.
+     * This method is kept for backward compatibility but delegates to drain().
+     * 
+     * @deprecated Use drain() instead for better Kafka compatibility
+     * @return Map of partition to RecordBatch for ready batches
+     */
+    @Deprecated
+    public Map<Integer, RecordBatch> getReadyBatches() {
+        return drain();
     }
 
     /**
-     * Flush all current batches and return them for sending
+     * Flush all current batches and return them for sending.
+     * Unlike drain(), this method sends ALL batches regardless of readiness.
+     * This is typically used for forced flushes (e.g., shutdown, partition changes).
+     * 
+     * Key differences from drain():
+     * - drain(): Only sends ready batches (size/time triggered)
+     * - flush(): Sends ALL non-empty batches immediately
+     * 
      * @return Map of partition to RecordBatch for all non-empty batches
      */
     public Map<Integer, RecordBatch> flush() {
