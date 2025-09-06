@@ -26,7 +26,7 @@ public class RecordAccumulator {
     private Map<TopicPartition, Deque<RecordBatch>> partitionBatches; // Per topic-partition batch queues
     private final Map<TopicPartition, AtomicInteger> inFlightBatches; // Track in-flight batches per partition
     private final int numPartitions;
-    private int drainIndex = 0; // Round-robin index for fair partition draining
+    private final Map<String, Integer> drainIndexPerBroker = new ConcurrentHashMap<>(); // Per-broker round-robin indexes
 
     public RecordAccumulator(int numPartitions) {
         this(new ProducerConfig(), numPartitions);
@@ -236,6 +236,41 @@ public class RecordAccumulator {
     }
     
     /**
+     * Get all topic-partitions assigned to a specific broker
+     * @param brokerAddress The broker address to get partitions for
+     * @return List of TopicPartition assigned to this broker
+     */
+    private List<TopicPartition> getPartitionsForBroker(String brokerAddress) {
+        List<TopicPartition> brokerPartitions = new ArrayList<>();
+        ClusterSnapshot snapshot = Metadata.getInstance().getClusterMetadataSnapshot().get();
+        
+        // Iterate through all topics and partitions
+        for (Map.Entry<String, TopicMetadata> topicEntry : snapshot.topics().entrySet()) {
+            String topic = topicEntry.getKey();
+            TopicMetadata topicMetadata = topicEntry.getValue();
+            
+            for (Map.Entry<Integer, PartitionMetadata> partitionEntry : topicMetadata.partitions().entrySet()) {
+                int partition = partitionEntry.getKey();
+                PartitionMetadata partitionMetadata = partitionEntry.getValue();
+                
+                // Check if this partition is assigned to the broker
+                if (brokerAddress.equals(partitionMetadata.brokerId())) {
+                    brokerPartitions.add(new TopicPartition(topic, partition));
+                }
+            }
+        }
+        
+        // Sort for consistent ordering
+        brokerPartitions.sort((a, b) -> {
+            int topicCompare = a.getTopic().compareTo(b.getTopic());
+            if (topicCompare != 0) return topicCompare;
+            return Integer.compare(a.getPartition(), b.getPartition());
+        });
+        
+        return brokerPartitions;
+    }
+    
+    /**
      * Get list of topic-partitions with ready batches
      * A batch is ready if it's full OR has exceeded linger.ms
      * Also checks in-flight limits to prevent overwhelming the broker
@@ -285,8 +320,9 @@ public class RecordAccumulator {
     
     /**
      * Drain ready batches from the accumulator for a specific broker
+     * Uses per-broker round-robin to ensure fairness across all partitions
      * @param brokerAddress The broker address to drain batches for (if null, drains all)
-     * @param readyPartitions List of TopicPartition to drain
+     * @param readyPartitions List of TopicPartition that have ready batches
      * @return Map of drained batches by TopicPartition
      */
     public synchronized Map<TopicPartition, RecordBatch> drain(String brokerAddress, List<TopicPartition> readyPartitions) throws IOException {
@@ -296,49 +332,88 @@ public class RecordAccumulator {
             return drainedBatches;
         }
         
-        // Use round-robin to avoid starvation: start from where we left off last time
-        int partitionCount = readyPartitions.size();
-        int start = drainIndex % partitionCount;
-        int current = start;
-        
-        do {
-            TopicPartition topicPartition = readyPartitions.get(current);
-            
-            // If broker address is specified, only drain partitions for that broker
-            if (brokerAddress != null) {
-                String partitionBroker = getBrokerForPartition(topicPartition);
-                if (partitionBroker == null || !partitionBroker.equals(brokerAddress)) {
-                    current = (current + 1) % partitionCount;
-                    continue; // Skip partitions not on this broker
+        // If no broker specified, drain from all ready partitions (legacy behavior)
+        if (brokerAddress == null) {
+            // For null broker, just drain the first ready partition found
+            for (TopicPartition topicPartition : readyPartitions) {
+                Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
+                if (deque != null && !deque.isEmpty()) {
+                    RecordBatch batch = deque.pollFirst();
+                    if (batch != null) {
+                        processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
+                        break; // Only drain one batch per call
+                    }
                 }
             }
+            return drainedBatches;
+        }
+        
+        // Get ALL partitions for this broker (not just ready ones) for stable round-robin
+        List<TopicPartition> brokerPartitions = getPartitionsForBroker(brokerAddress);
+        if (brokerPartitions.isEmpty()) {
+            Logger.warn("No partitions found for broker {}", brokerAddress);
+            return drainedBatches;
+        }
+        
+        // Get or initialize the drain index for this broker
+        int brokerDrainIndex = drainIndexPerBroker.computeIfAbsent(brokerAddress, k -> 0);
+        
+        // Start from the broker's current index and look for a ready partition
+        int partitionCount = brokerPartitions.size();
+        int start = brokerDrainIndex % partitionCount;
+        int current = start;
+        boolean batchDrained = false;
+        
+        // Round-robin through all broker partitions to find one that's ready
+        do {
+            TopicPartition topicPartition = brokerPartitions.get(current);
             
-            Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
-            if (deque != null && !deque.isEmpty()) {
-                // Remove the first (oldest) batch from the deque
-                RecordBatch batch = deque.pollFirst();
-                if (batch != null) {
-                    // Compress the batch (will only compress if type != NONE)
-                    if (batch.getCurrBatchSizeInBytes() > 0) {
-                        batch.compress();
+            // Check if this partition is in the ready list
+            if (readyPartitions.contains(topicPartition)) {
+                Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
+                if (deque != null && !deque.isEmpty()) {
+                    // Drain the first (oldest) batch from this partition
+                    RecordBatch batch = deque.pollFirst();
+                    if (batch != null) {
+                        processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
+                        batchDrained = true;
+                        break; // Only drain one batch per call for fairness
                     }
-                    
-                    // Deallocate buffer back to pool
-                    free.deallocate(batch.getBuffer(), batch.getInitialCapacity());
-                    
-                    drainedBatches.put(topicPartition, batch);
-                    Logger.info("Drained batch from {} for broker {} - size: {} bytes, compressed: {}, remaining batches: {}",
-                               topicPartition, brokerAddress, batch.getDataSize(), batch.isCompressed(), deque.size());
                 }
             }
             
             current = (current + 1) % partitionCount;
         } while (current != start);
         
-        // Update drain index for next iteration to ensure fairness
-        drainIndex = (drainIndex + 1) % partitionCount;
+        // Update the broker's drain index for next iteration
+        // This ensures we start from the next partition next time
+        drainIndexPerBroker.put(brokerAddress, (brokerDrainIndex + 1) % partitionCount);
+        
+        if (!batchDrained && !readyPartitions.isEmpty()) {
+            Logger.debug("No batch drained for broker {} despite {} ready partitions", 
+                        brokerAddress, readyPartitions.size());
+        }
         
         return drainedBatches;
+    }
+    
+    /**
+     * Helper method to process a batch for draining
+     */
+    private void processBatchForDraining(RecordBatch batch, TopicPartition topicPartition, 
+                                        String brokerAddress, Map<TopicPartition, RecordBatch> drainedBatches,
+                                        Deque<RecordBatch> deque) throws IOException {
+        // Compress the batch (will only compress if type != NONE)
+        if (batch.getCurrBatchSizeInBytes() > 0) {
+            batch.compress();
+        }
+        
+        // Deallocate buffer back to pool
+        free.deallocate(batch.getBuffer(), batch.getInitialCapacity());
+        
+        drainedBatches.put(topicPartition, batch);
+        Logger.info("Drained batch from {} for broker {} - size: {} bytes, compressed: {}, remaining batches: {}",
+                   topicPartition, brokerAddress, batch.getDataSize(), batch.isCompressed(), deque.size());
     }
     
 
