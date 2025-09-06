@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -161,6 +162,48 @@ public class RecordAccumulator {
 
 
     /**
+     * Expire old batches that have exceeded the delivery timeout
+     * @param now Current time in milliseconds
+     */
+    private void expireOldBatches(long now) {
+        long deliveryTimeoutMs = config.getDeliveryTimeoutMs();
+        
+        // Iterate through all partition batches
+        for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : partitionBatches.entrySet()) {
+            TopicPartition topicPartition = entry.getKey();
+            Deque<RecordBatch> deque = entry.getValue();
+            
+            if (deque != null && !deque.isEmpty()) {
+                // Check batches from oldest to newest
+                Iterator<RecordBatch> iterator = deque.iterator();
+                while (iterator.hasNext()) {
+                    RecordBatch batch = iterator.next();
+                    long age = now - batch.getCreationTime();
+                    
+                    // Check if batch has expired
+                    if (age > deliveryTimeoutMs) {
+                        // Remove the expired batch
+                        iterator.remove();
+                        
+                        // Free the buffer back to the pool
+                        free.deallocate(batch.getBuffer(), batch.getInitialCapacity());
+                        
+                        // Log the expiration
+                        Logger.warn("Batch expired for {} after {}ms (delivery.timeout.ms={}ms). " +
+                                   "Records: {}, Size: {} bytes", 
+                                   topicPartition, age, deliveryTimeoutMs, 
+                                   batch.getRecordCount(), batch.getCurrBatchSizeInBytes());
+                    } else {
+                        // Batches are ordered by age, so if this one hasn't expired, 
+                        // newer ones won't have either
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
      * Get list of topic-partitions with ready batches
      * A batch is ready if it's full OR has exceeded linger.ms
      * Also checks in-flight limits to prevent overwhelming the broker
@@ -169,6 +212,9 @@ public class RecordAccumulator {
     public List<TopicPartition> ready() {
         List<TopicPartition> readyPartitions = new ArrayList<>();
         long now = System.currentTimeMillis();
+        
+        // First, expire old batches before checking readiness
+        expireOldBatches(now);
         
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : partitionBatches.entrySet()) {
             TopicPartition topicPartition = entry.getKey();

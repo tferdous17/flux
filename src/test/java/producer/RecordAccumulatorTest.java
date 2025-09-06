@@ -327,4 +327,140 @@ public class RecordAccumulatorTest {
         Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(List.of());
         assertTrue(drainedBatches.isEmpty());
     }
+    
+    @Test
+    public void testBatchExpiry() throws IOException, InterruptedException {
+        // Create config with very short delivery timeout for testing
+        Properties props = new Properties();
+        props.setProperty("delivery.timeout.ms", "100"); // 100ms timeout
+        ProducerConfig config = new ProducerConfig(props);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 3);
+        
+        // Add a record to create a batch
+        Headers headers = new Headers();
+        ProducerRecord<String, String> record = new ProducerRecord<>(
+                "TestTopic", 0, System.currentTimeMillis(), "key", "value", headers
+        );
+        byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
+        
+        accumulator.append(serializedData);
+        
+        // Verify batch exists
+        assertNotNull(accumulator.getCurrentBatch("TestTopic", 0));
+        
+        // Wait for batch to expire
+        Thread.sleep(150); // Wait longer than delivery timeout
+        
+        // Call ready() which should trigger expiry check
+        List<TopicPartition> readyPartitions = accumulator.ready();
+        
+        // Batch should be expired and removed
+        assertNull(accumulator.getCurrentBatch("TestTopic", 0));
+        assertTrue(readyPartitions.isEmpty());
+    }
+    
+    @Test
+    public void testBatchExpiryWithMemoryReclaim() throws IOException, InterruptedException {
+        // Create config with short delivery timeout
+        Properties props = new Properties();
+        props.setProperty("delivery.timeout.ms", "100"); // 100ms timeout
+        ProducerConfig config = new ProducerConfig(props);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 3);
+        
+        // Track initial memory
+        long initialMemory = accumulator.getTotalBytesUsed();
+        assertEquals(0, initialMemory);
+        
+        // Add multiple records to create batches
+        Headers headers = new Headers();
+        for (int i = 0; i < 3; i++) {
+            ProducerRecord<String, String> record = new ProducerRecord<>(
+                    "TestTopic", i, System.currentTimeMillis(), "key" + i, "value" + i, headers
+            );
+            byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
+            accumulator.append(serializedData);
+        }
+        
+        // Verify memory is being used
+        long memoryAfterAppend = accumulator.getTotalBytesUsed();
+        assertTrue(memoryAfterAppend > 0);
+        
+        // Wait for batches to expire
+        Thread.sleep(150);
+        
+        // Call ready() to trigger expiry
+        accumulator.ready();
+        
+        // Memory should be reclaimed
+        long memoryAfterExpiry = accumulator.getTotalBytesUsed();
+        assertEquals(0, memoryAfterExpiry);
+    }
+    
+    @Test
+    public void testExpiredBatchesNotReady() throws IOException, InterruptedException {
+        // Create config with moderate delivery timeout
+        Properties props = new Properties();
+        props.setProperty("delivery.timeout.ms", "200"); // 200ms timeout
+        props.setProperty("linger.ms", "50"); // 50ms linger
+        ProducerConfig config = new ProducerConfig(props);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 3);
+        
+        // Add a record that won't fill the batch
+        Headers headers = new Headers();
+        ProducerRecord<String, String> record = new ProducerRecord<>(
+                "TestTopic", 0, System.currentTimeMillis(), "key", "small", headers
+        );
+        byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
+        accumulator.append(serializedData);
+        
+        // Wait past linger time but before expiry
+        Thread.sleep(60); // Past 50ms linger
+        
+        // Batch should be ready due to linger timeout
+        List<TopicPartition> readyPartitions = accumulator.ready();
+        assertEquals(1, readyPartitions.size());
+        
+        // Now wait for expiry
+        Thread.sleep(200); // Total > 200ms delivery timeout
+        
+        // Batch should be expired and not ready
+        readyPartitions = accumulator.ready();
+        assertTrue(readyPartitions.isEmpty());
+        assertNull(accumulator.getCurrentBatch("TestTopic", 0));
+    }
+    
+    @Test
+    public void testMixedExpiryAndReadyBatches() throws IOException, InterruptedException {
+        // Create config with moderate timeouts
+        Properties props = new Properties();
+        props.setProperty("delivery.timeout.ms", "150"); // 150ms timeout
+        props.setProperty("batch.size", "100"); // Small batch for testing
+        ProducerConfig config = new ProducerConfig(props);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 3);
+        
+        Headers headers = new Headers();
+        
+        // Add old batch that will expire
+        ProducerRecord<String, String> oldRecord = new ProducerRecord<>(
+                "TestTopic", 0, System.currentTimeMillis(), "key", "old", headers
+        );
+        accumulator.append(ProducerRecordCodec.serialize(oldRecord, String.class, String.class));
+        
+        // Wait for it to age
+        Thread.sleep(160); // Past delivery timeout
+        
+        // Add new batch that should be ready (full)
+        ProducerRecord<String, String> newRecord = new ProducerRecord<>(
+                "TestTopic", 1, System.currentTimeMillis(), "key", "x".repeat(95), headers
+        );
+        accumulator.append(ProducerRecordCodec.serialize(newRecord, String.class, String.class));
+        
+        // Call ready()
+        List<TopicPartition> readyPartitions = accumulator.ready();
+        
+        // Old batch should be expired, new batch should be ready
+        assertNull(accumulator.getCurrentBatch("TestTopic", 0)); // Old batch expired
+        assertEquals(1, readyPartitions.size());
+        assertEquals(1, readyPartitions.get(0).getPartition()); // New batch is ready
+    }
 }
