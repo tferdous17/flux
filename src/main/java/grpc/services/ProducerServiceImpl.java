@@ -26,12 +26,12 @@ public class ProducerServiceImpl extends PublishToBrokerGrpc.PublishToBrokerImpl
                 .getRecordsList()
                 .stream()
                 .map(record -> {
-//                    String topic = record.getTopic();
-//                    if (topic == null || topic.isEmpty()) {
-//                        throw new IllegalArgumentException("Topic name is required for all records");
-//                    }
+                    String topic = record.getTopic();
+                    if (topic == null || topic.isEmpty()) {
+                        throw new IllegalArgumentException("Topic name is required for all records");
+                    }
                     return new IntermediaryRecord(
-                            "", // TODO: fix this when u can spidey
+                            topic,
                             record.getTargetPartition(),
                             record.getData().toByteArray()
                     );

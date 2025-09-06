@@ -5,46 +5,40 @@ import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RecordAccumulator {
-    static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
-    static private final int DEFAULT_MAX_BUFFER_SIZE = 32 * 1024 * 1024; // 32 MB
-
-    private final int batchSize;
-    private final int maxBufferSize;
+    private final ProducerConfig config;
     private volatile long totalBytesUsed; // Track memory usage across all batches
-    private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
+    private Map<TopicPartition, RecordBatch> partitionBatches; // Per topic-partition batches
     private final int numPartitions;
 
     public RecordAccumulator(int numPartitions) {
-        this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
-        this.maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
-        this.totalBytesUsed = 0;
-        this.partitionBatches = new ConcurrentHashMap<>();
-        this.numPartitions = numPartitions;
+        this(new ProducerConfig(), numPartitions);
     }
 
     public RecordAccumulator(int batchSize, int numPartitions) {
-        this.batchSize = validateBatchSize(batchSize);
-        this.maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
-        this.totalBytesUsed = 0;
-        this.partitionBatches = new ConcurrentHashMap<>();
-        this.numPartitions = numPartitions;
+        this(new ProducerConfig(batchSize, 100, 33554432, true), numPartitions);
     }
 
     public RecordAccumulator(int batchSize, int maxBufferSize, int numPartitions) {
-        this.batchSize = validateBatchSize(batchSize);
-        this.maxBufferSize = maxBufferSize;
+        this(new ProducerConfig(batchSize, 100, maxBufferSize, true), numPartitions);
+    }
+    
+    public RecordAccumulator(ProducerConfig config, int numPartitions) {
+        this.config = config;
         this.totalBytesUsed = 0;
         this.partitionBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
+        validateBatchSize(config.getBatchSize());
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
         Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
-        return new RecordBatch(batchSize);
+        return new RecordBatch(config.getBatchSize());
     }
 
     public boolean flush() {
@@ -57,20 +51,22 @@ public class RecordAccumulator {
     //       and basically "inline" the buffering. I.e., all the buffering mechanisms + partition routing can be
     //       moved to FluxProducer. Come back to this in a later ticket/PR.
     /**
-     * Extract partition information from a serialized ProducerRecord
+     * Extract topic and partition information from a serialized ProducerRecord
      */
-    private int extractPartitionFromRecord(byte[] serializedRecord) {
-        // Deserialize to get the ProducerRecord and extract partition info
+    private TopicPartition extractTopicPartitionFromRecord(byte[] serializedRecord) {
+        // Deserialize to get the ProducerRecord and extract topic/partition info
         ProducerRecord<String, String> record = ProducerRecordCodec.deserialize(
                 serializedRecord, String.class, String.class);
 
-        return PartitionSelector.getPartitionNumberForRecord(
+        int partition = PartitionSelector.getPartitionNumberForRecord(
                 InMemoryTopicMetadataRepository.getInstance(),
                 record.getPartitionNumber(),
                 record.getKey(),
                 record.getTopic(),
                 numPartitions
         );
+        
+        return new TopicPartition(record.getTopic(), partition);
     }
 
     /*
@@ -83,28 +79,28 @@ public class RecordAccumulator {
     */
     public void append(byte[] serializedRecord) throws IOException {
         // Check memory limits before proceeding
-        if (totalBytesUsed + serializedRecord.length > maxBufferSize) {
+        if (totalBytesUsed + serializedRecord.length > config.getMaxBufferSize()) {
             throw new IllegalStateException(
-                "Cannot append record: would exceed maximum buffer size of " + maxBufferSize + " bytes. " +
+                "Cannot append record: would exceed maximum buffer size of " + config.getMaxBufferSize() + " bytes. " +
                 "Current usage: " + totalBytesUsed + " bytes, Record size: " + serializedRecord.length + " bytes."
             );
         }
 
-        // Extract partition from the serialized record
-        int partition = extractPartitionFromRecord(serializedRecord);
-        RecordBatch currentBatch = partitionBatches.get(partition);
+        // Extract topic and partition from the serialized record
+        TopicPartition topicPartition = extractTopicPartitionFromRecord(serializedRecord);
+        RecordBatch currentBatch = partitionBatches.get(topicPartition);
         
         int baseOffset = 0; // TODO: Should be determined by broker/partition
         
         try {
             if (currentBatch == null || !currentBatch.append(serializedRecord)) {
                 if (currentBatch != null) { // Case 1B - batch is full
-                    Logger.info("Batch for partition " + partition + " is full. Flushing current batch.");
+                    Logger.info("Batch for {} is full. Flushing current batch.", topicPartition);
                     flush(); // TODO: Missing implementation
                 }
-                Logger.info("Creating a new batch for partition " + partition + ".");
-                currentBatch = createBatch(partition, baseOffset);
-                partitionBatches.put(partition, currentBatch);
+                Logger.info("Creating a new batch for {}.", topicPartition);
+                currentBatch = createBatch(topicPartition.getPartition(), baseOffset);
+                partitionBatches.put(topicPartition, currentBatch);
                 
                 if (!currentBatch.append(serializedRecord)) {
                     throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
@@ -113,7 +109,7 @@ public class RecordAccumulator {
             
             // Update total bytes used
             totalBytesUsed += serializedRecord.length;
-            Logger.info("Record appended successfully to partition " + partition + ". Total bytes used: " + totalBytesUsed);
+            Logger.info("Record appended successfully to {}. Total bytes used: {}", topicPartition, totalBytesUsed);
         } catch (Exception e) {
             Logger.error("Failed to append record: " + e.getMessage(), e);
             throw e;
@@ -121,28 +117,34 @@ public class RecordAccumulator {
     }
 
     /**
-     * Get the current batch for a specific partition
+     * Get the current batch for a specific topic-partition
      */
-    public RecordBatch getCurrentBatch(int partition) {
-        return partitionBatches.get(partition);
+    public RecordBatch getCurrentBatch(String topic, int partition) {
+        return partitionBatches.get(new TopicPartition(topic, partition));
     }
 
     /**
      * Get the current batch for partition 0 (backward compatibility)
      */
     public RecordBatch getCurrentBatch() {
-        return getCurrentBatch(0);
+        // Find first batch with partition 0
+        for (Map.Entry<TopicPartition, RecordBatch> entry : partitionBatches.entrySet()) {
+            if (entry.getKey().getPartition() == 0) {
+                return entry.getValue();
+            }
+        }
+        return null;
     }
 
     /**
      * Get all partition batches
      */
-    public Map<Integer, RecordBatch> getPartitionBatches() {
+    public Map<TopicPartition, RecordBatch> getPartitionBatches() {
         return new ConcurrentHashMap<>(partitionBatches); // Return copy to prevent external modification
     }
 
     public int getBatchSize() {
-        return batchSize;
+        return config.getBatchSize();
     }
 
     public long getTotalBytesUsed() {
@@ -150,9 +152,67 @@ public class RecordAccumulator {
     }
 
     public int getMaxBufferSize() {
-        return maxBufferSize;
+        return config.getMaxBufferSize();
     }
 
+    /**
+     * Get list of topic-partitions with ready batches
+     * A batch is ready if it's full OR has exceeded linger.ms
+     * @return List of TopicPartition with ready batches
+     */
+    public List<TopicPartition> ready() {
+        List<TopicPartition> readyPartitions = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        
+        for (Map.Entry<TopicPartition, RecordBatch> entry : partitionBatches.entrySet()) {
+            RecordBatch batch = entry.getValue();
+            if (batch != null) {
+                boolean isFull = batch.isFull();
+                boolean hasTimedOut = (now - batch.getCreationTime()) >= config.getLingerMs();
+                
+                if (isFull || hasTimedOut) {
+                    readyPartitions.add(entry.getKey());
+                    if (isFull) {
+                        Logger.info("{} batch is ready - batch is full", entry.getKey());
+                    } else {
+                        Logger.info("{} batch is ready - exceeded linger.ms ({}ms)", 
+                                   entry.getKey(), config.getLingerMs());
+                    }
+                }
+            }
+        }
+        
+        return readyPartitions;
+    }
+    
+    /**
+     * Drain ready batches from the accumulator
+     * @param readyPartitions List of TopicPartition to drain
+     * @return Map of drained batches by TopicPartition
+     */
+    public synchronized Map<TopicPartition, RecordBatch> drain(List<TopicPartition> readyPartitions) throws IOException {
+        Map<TopicPartition, RecordBatch> drainedBatches = new ConcurrentHashMap<>();
+        
+        for (TopicPartition topicPartition : readyPartitions) {
+            RecordBatch batch = partitionBatches.remove(topicPartition);
+            if (batch != null) {
+                // Compress if enabled
+                if (config.isCompressionEnabled() && batch.getCurrBatchSizeInBytes() > 0) {
+                    batch.compress();
+                }
+                
+                // Update memory tracking
+                decreaseMemoryUsage(batch);
+                
+                drainedBatches.put(topicPartition, batch);
+                Logger.info("Drained batch from {} - size: {} bytes, compressed: {}",
+                           topicPartition, batch.getDataSize(), batch.isCompressed());
+            }
+        }
+        
+        return drainedBatches;
+    }
+    
     /**
      * Helper method to decrease memory tracking when a batch is removed
      */
@@ -162,16 +222,16 @@ public class RecordAccumulator {
 
     public void printRecord() {
         Logger.info("Batch Size: " + getBatchSize());
-        Logger.info("Total Memory Used: " + totalBytesUsed + " / " + maxBufferSize + " bytes");
-        Logger.info("Partition Batches:");
+        Logger.info("Total Memory Used: " + totalBytesUsed + " / " + config.getMaxBufferSize() + " bytes");
+        Logger.info("Topic-Partition Batches:");
         
-        partitionBatches.forEach((partition, batch) -> {
-            Logger.info("Partition " + partition + ":");
+        partitionBatches.forEach((topicPartition, batch) -> {
+            Logger.info(topicPartition + ":");
             batch.printBatchDetails();
         });
     }
 
-    private int validateBatchSize(int batchSize) {
+    private void validateBatchSize(int batchSize) {
         final int MIN_BATCH_SIZE = 1; // Minimum size
         final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
 
@@ -180,6 +240,9 @@ public class RecordAccumulator {
                     "Batch size must be between " + MIN_BATCH_SIZE + "-" + MAX_BATCH_SIZE + " bytes."
             );
         }
-        return batchSize;
+    }
+    
+    public ProducerConfig getConfig() {
+        return config;
     }
 }

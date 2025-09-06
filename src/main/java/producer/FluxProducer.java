@@ -19,6 +19,7 @@ import proto.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -28,7 +29,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private final MetadataServiceGrpc.MetadataServiceFutureStub metadataFutureStub;
     private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
-    List<IntermediaryRecord> buffer;
+    private RecordAccumulator accumulator;
     private AtomicReference<ClusterSnapshot> cachedClusterMetadata; // read-heavy
 
     public FluxProducer(Properties props, long initialFlushDelay, long flushDelayInterval) {
@@ -42,13 +43,25 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         channel = Grpc.newChannelBuilder(bootstrapServer, InsecureChannelCredentials.create()).build();
         publishToBrokerFutureStub = PublishToBrokerGrpc.newFutureStub(channel);
         metadataFutureStub = MetadataServiceGrpc.newFutureStub(channel);
-        buffer = new ArrayList<>();
-
-        FluxExecutor
-                .getSchedulerService()
-                .scheduleWithFixedDelay(this::flushBuffer, initialFlushDelay, flushDelayInterval, TimeUnit.SECONDS);
 
         cachedClusterMetadata = Metadata.getInstance().getClusterMetadataSnapshot();
+        
+        // Get number of partitions for accumulator initialization
+        int currentNumBrokerPartitions = cachedClusterMetadata
+                .get()
+                .brokers()
+                .get(bootstrapServer)
+                .numPartitions();
+        
+        // Initialize accumulator with ProducerConfig from properties
+        ProducerConfig config = new ProducerConfig(props);
+        accumulator = new RecordAccumulator(config, currentNumBrokerPartitions);
+
+        // Use linger.ms from config for scheduling interval (convert to milliseconds)
+        FluxExecutor
+                .getSchedulerService()
+                .scheduleWithFixedDelay(this::flushBuffer, config.getLingerMs(), config.getLingerMs(), TimeUnit.MILLISECONDS);
+
         Metadata.getInstance().addListener(this);
     }
 
@@ -69,31 +82,23 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         Object key = record.getKey() == null ? "" : record.getKey();
         Object value = record.getValue() == null ? "" : record.getValue();
 
-        int currentNumBrokerPartitions = cachedClusterMetadata
-                .get()
-                .brokers()
-                .get(bootstrapServer)
-                .numPartitions();
-
-
-        // Determine target partition, and then serialize.
-        int targetPartition = PartitionSelector.getPartitionNumberForRecord(
-                InMemoryTopicMetadataRepository.getInstance(),
-                record.getPartitionNumber(),
-                key.toString(),
-                record.getTopic(),
-                currentNumBrokerPartitions
-        );
-        System.out.println("Record has target partition = " + targetPartition);
-        // Serialize data and convert to ByteString (gRPC only takes this form for byte data)
-        byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
-
         String topicName = record.getTopic();
         if (topicName == null || topicName.isEmpty()) {
             throw new IllegalArgumentException("Topic name is required for all records");
         }
-        buffer.add(new IntermediaryRecord(topicName, targetPartition, serializedData));
-        Logger.info("Record added to buffer.");
+
+        // Serialize data (RecordAccumulator will handle partition selection internally)
+        byte[] serializedData = ProducerRecordCodec.serialize(record, key.getClass(), value.getClass());
+
+        try {
+            // Use accumulator to append record - it handles partitioning internally
+            accumulator.append(serializedData);
+            Logger.info("Record added to accumulator.");
+        } catch (IllegalStateException e) {
+            // Handle memory limit exceeded
+            Logger.error("Failed to send record - memory limit exceeded: {}", e.getMessage());
+            throw new IOException("Cannot send record: " + e.getMessage(), e);
+        }
     }
 
     // NOTE: ONLY USE THIS FOR TESTING
@@ -102,54 +107,69 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     }
 
     private void flushBuffer() {
-        if (buffer.isEmpty()) {
-            return;
+        try {
+            // Get topic-partitions with ready batches
+            List<TopicPartition> readyPartitions = accumulator.ready();
+            if (readyPartitions.isEmpty()) {
+                return;
+            }
+
+            Logger.info("COMMENCING BUFFER FLUSH for {} ready topic-partitions.", readyPartitions.size());
+
+            // Drain ready batches from accumulator
+            Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
+
+            // Convert batches to records for gRPC request
+            List<proto.Record> records = new ArrayList<>();
+            for (Map.Entry<TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
+                TopicPartition topicPartition = entry.getKey();
+                RecordBatch batch = entry.getValue();
+                
+                // Get batch data (will be compressed if enabled)
+                byte[] batchData = batch.getData();
+                
+                proto.Record record = proto.Record
+                        .newBuilder()
+                        .setTopic(topicPartition.getTopic())
+                        .setTargetPartition(topicPartition.getPartition())
+                        .setData(ByteString.copyFrom(batchData))
+                        .build();
+                records.add(record);
+                
+                Logger.info("Adding batch from {} with {} bytes (compressed: {})", 
+                           topicPartition, batchData.length, batch.isCompressed());
+            }
+
+            PublishDataToBrokerRequest request = PublishDataToBrokerRequest
+                    .newBuilder()
+                    .addAllRecords(records)
+                    .build();
+
+            System.out.println("SIZE OF REQ: " + request.getSerializedSize());
+
+            // Send the request and receive the response (acknowledgement)
+            Logger.info("SENDING BATCH OF {} RECORDS FROM {} PARTITIONS.", records.size(), drainedBatches.size());
+            ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
+            Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
+                @Override
+                public void onSuccess(BrokerToPublisherAck response) {
+                    Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
+                            response.getAcknowledgement(),
+                            response.getStatus(),
+                            response.getRecordOffset()
+                    );
+                }
+
+                @Override
+                public void onFailure(Throwable t) {
+                    // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
+                    Logger.error("Failed to send batch to broker", t);
+                }
+            }, FluxExecutor.getExecutorService());
+            
+        } catch (IOException e) {
+            Logger.error("Error during buffer flush", e);
         }
-
-        Logger.info("COMMENCING BUFFER FLUSH.");
-
-        // Create deep copy/snapshot of the buffer so we can send it in our request and clear the actual buffer
-        // This allows us to continue appending to the buffer w/o messing with the data inside the publish request
-        List<IntermediaryRecord> bufferSnapshot = new ArrayList<>(buffer);
-        buffer.clear();
-
-        PublishDataToBrokerRequest request = PublishDataToBrokerRequest
-                .newBuilder()
-                .addAllRecords(
-                        bufferSnapshot
-                        .stream()
-                        .map(r -> proto.Record
-                                .newBuilder()
-                                .setTargetPartition(r.targetPartition())
-                                .setData(ByteString.copyFrom(r.data()))
-//                                .setTopic(r.topicName())  TODO: fix this too
-                                .build()
-                        )
-                        .toList()
-                )
-                .build();
-
-        System.out.println("SIZE OF REQ: " + request.getSerializedSize());
-
-        // Send the request and receive the response (acknowledgement)
-        Logger.info("SENDING OVER BATCH OF RECORDS.");
-        ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
-        Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
-            @Override
-            public void onSuccess(BrokerToPublisherAck response) {
-                Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
-                        response.getAcknowledgement(),
-                        response.getStatus(),
-                        response.getRecordOffset()
-                );
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
-                Logger.error(t);
-            }
-        }, FluxExecutor.getExecutorService());
     }
 
     @Override
