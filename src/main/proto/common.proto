@@ -12,6 +12,12 @@ enum Status {
   BROKER_SHUTDOWN_IN_PROGRESS = 5;
 }
 
+// Compression types for record batches
+enum CompressionType {
+  NONE = 0;   // No compression
+  GZIP = 1;   // GZIP compression
+}
+
 // Shared timestamp type
 message Timestamp {
   int64 milliseconds = 1;

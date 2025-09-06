@@ -11,6 +11,7 @@ service PublishToBroker {
 
 message PublishDataToBrokerRequest {
   repeated Record records = 1;
+  CompressionType compression_type = 2;
 }
 
 message Record {

@@ -1,5 +1,6 @@
 package grpc.services;
 
+import commons.compression.CompressionType;
 import server.internal.Broker;
 import io.grpc.stub.StreamObserver;
 import org.tinylog.Logger;
@@ -22,6 +23,11 @@ public class ProducerServiceImpl extends PublishToBrokerGrpc.PublishToBrokerImpl
     @Override
     public void send(PublishDataToBrokerRequest req, StreamObserver<BrokerToPublisherAck> responseObserver) {
         BrokerToPublisherAck.Builder ackBuilder = BrokerToPublisherAck.newBuilder();
+        
+        // Extract compression type from request
+        CompressionType compressionType = CompressionType.fromId(req.getCompressionType().getNumber());
+        Logger.debug("Received request with compression type: {}", compressionType);
+        
         List<IntermediaryRecord> records = req
                 .getRecordsList()
                 .stream()
@@ -39,8 +45,8 @@ public class ProducerServiceImpl extends PublishToBrokerGrpc.PublishToBrokerImpl
                 .toList();
 
         try {
-            Logger.info("Producing messages");
-            int recordOffset = broker.produceMessages(records);
+            Logger.info("Producing messages with compression: {}", compressionType);
+            int recordOffset = broker.produceMessages(records, compressionType);
             ackBuilder
                     .setAcknowledgement("ACK: Data received successfully.")
                     .setStatus(Status.SUCCESS)

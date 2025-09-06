@@ -1,5 +1,6 @@
 package producer;
 
+import commons.compression.CompressionType;
 import commons.utils.PartitionSelector;
 import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
@@ -32,6 +33,7 @@ public class RecordAccumulator {
     private final int numPartitions;
     private final Object batchLock = new Object(); // For thread safety
     private final BufferPool bufferPool; // Memory management pool
+    private final CompressionType compressionType; // Compression type for all batches
     
     // Simple metrics
     private final AtomicLong batchesCreated = new AtomicLong(0);
@@ -46,7 +48,7 @@ public class RecordAccumulator {
      * @param numPartitions Number of partitions to manage batches for
      */
     public RecordAccumulator(int numPartitions) {
-        this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
+        this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
     }
 
     /**
@@ -57,7 +59,7 @@ public class RecordAccumulator {
      * @param numPartitions Number of partitions to manage batches for
      */
     public RecordAccumulator(int batchSize, int numPartitions) {
-        this(batchSize, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
+        this(batchSize, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
     }
 
     /**
@@ -69,7 +71,7 @@ public class RecordAccumulator {
      * @param lingerMs Maximum time in milliseconds to wait before sending (0-60000ms)
      */
     public RecordAccumulator(int batchSize, int numPartitions, long lingerMs) {
-        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY);
+        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
     }
     
     /**
@@ -82,7 +84,7 @@ public class RecordAccumulator {
      * @param bufferMemory Total memory in bytes available for buffering (>= batchSize, max 1GB)
      */
     public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long bufferMemory) {
-        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, bufferMemory);
+        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, bufferMemory, CompressionType.NONE);
     }
     
     /**
@@ -100,7 +102,7 @@ public class RecordAccumulator {
      *                     (must be >= batchSize, max 1GB)
      * @throws IllegalArgumentException if any parameter is invalid
      */
-    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long batchTimeoutMs, double batchSizeThreshold, long bufferMemory) {
+    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long batchTimeoutMs, double batchSizeThreshold, long bufferMemory, CompressionType compressionType) {
         // Validate all configuration parameters
         validateConfiguration(batchSize, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory);
         
@@ -111,21 +113,22 @@ public class RecordAccumulator {
         this.partitionBatches = new ConcurrentHashMap<>();
         this.inflightBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
+        this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
         
         // Initialize the buffer pool with configured memory
         long maxBlockTimeMs = 1000; // 1 second max wait for memory
         this.bufferPool = new BufferPool(bufferMemory, batchSize, maxBlockTimeMs);
         
         
-        Logger.info("RecordAccumulator initialized - BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, SizeThreshold: {}, Memory: {}MB", 
-                   batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024));
+        Logger.info("RecordAccumulator initialized - BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, SizeThreshold: {}, Memory: {}MB, Compression: {}", 
+                   batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024), compressionType);
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
         Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
         
-        // Create batch with buffer pool support
-        RecordBatch batch = new RecordBatch(batchSize, bufferPool);
+        // Create batch with buffer pool support and compression
+        RecordBatch batch = new RecordBatch(batchSize, bufferPool, compressionType);
         batchesCreated.incrementAndGet();
         return batch;
     }

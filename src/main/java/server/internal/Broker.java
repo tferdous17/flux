@@ -5,6 +5,8 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import commons.FluxExecutor;
 import commons.FluxTopic;
+import commons.compression.CompressionType;
+import commons.compression.CompressionUtils;
 import commons.utils.PartitionWriteManager;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
@@ -187,11 +189,11 @@ public class Broker implements Controller {
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
         // TODO: BROKEN VIA MERGE CONFLICT -- GOING TO PURPOSELY FIX IN SEPARATE PR
         partitions.forEach(p -> {
-            partitionMetadataMap.put(
-                    p.getPartitionId(),
-                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
-            );
-        });
+                partitionMetadataMap.put(
+                        p.getPartitionId(),
+                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
+                );
+            });
 
         this.controllerMetadata.set(new BrokerMetadata(
                 this.brokerId,
@@ -207,11 +209,11 @@ public class Broker implements Controller {
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
         // TODO: SAME AS ABOVE TODO
         partitions.forEach(p -> {
-            partitionMetadataMap.put(
-                    p.getPartitionId(),
-                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
-            );
-        });
+                partitionMetadataMap.put(
+                        p.getPartitionId(),
+                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
+                );
+            });
         if (!isActiveController) {
             UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
                     .newBuilder()
@@ -317,14 +319,33 @@ public class Broker implements Controller {
     }
 
     public int produceMessages(List<IntermediaryRecord> messages) throws IOException {
+        return produceMessages(messages, CompressionType.NONE);
+    }
+    
+    /**
+     * Produce messages with specified compression type
+     */
+    public int produceMessages(List<IntermediaryRecord> messages, CompressionType compressionType) throws IOException {
+        if (compressionType == null) {
+            compressionType = CompressionType.NONE;
+        }
+        
+        Logger.debug("Producing {} messages with compression: {}", messages.size(), compressionType);
+        
+        // Basic validation: if compression is enabled, perform a quick validation
+        if (compressionType != CompressionType.NONE) {
+            validateCompressionSupport(compressionType);
+        }
+        
         // we can just call the produceSingleMessage() for each byte[] in messages
+        // TODO: Future enhancement - batch messages by compression type for better efficiency
         int counter = 0;
         int lastRecordOffset = -1;
         for (IntermediaryRecord record : messages) {
             lastRecordOffset = produceSingleMessage(record.topicName(), record.targetPartition(), record.data());
             counter++;
         }
-        Logger.info("Appended %d records to broker.".formatted(counter));
+        Logger.info("Appended {} records to broker with compression: {}", counter, compressionType);
         System.out.println("PRINTING # OF RECORDS PER PARTITION:");
         for (Map.Entry<String, List<Partition>> entry : topicPartitions.entrySet()) {
             String topic = entry.getKey();
@@ -334,6 +355,34 @@ public class Broker implements Controller {
         }
 
         return lastRecordOffset;
+    }
+    
+    /**
+     * Validate that the broker supports the requested compression type
+     * This mimics Kafka's validation behavior
+     */
+    private void validateCompressionSupport(CompressionType compressionType) throws IOException {
+        Logger.debug("Validating compression support for: {}", compressionType);
+        
+        // Test compression/decompression with a small sample
+        try {
+            byte[] testData = "test".getBytes();
+            java.nio.ByteBuffer testBuffer = java.nio.ByteBuffer.wrap(testData);
+            
+            // Compress the test data
+            java.nio.ByteBuffer compressed = CompressionUtils.compress(testBuffer, compressionType);
+            
+            // Decompress to validate it works
+            java.nio.ByteBuffer decompressed = CompressionUtils.decompress(compressed, compressionType);
+            
+            if (!java.util.Arrays.equals(testData, decompressed.array())) {
+                throw new IOException("Compression validation failed: data mismatch for " + compressionType);
+            }
+            
+            Logger.debug("Compression validation successful for: {}", compressionType);
+        } catch (Exception e) {
+            throw new IOException("Compression type " + compressionType + " is not supported or failed validation", e);
+        }
     }
 
     // TODO: Finish consumer infrastructure

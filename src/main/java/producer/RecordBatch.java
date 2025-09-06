@@ -1,5 +1,7 @@
 package producer;
 
+import commons.compression.CompressionType;
+import commons.compression.CompressionUtils;
 import org.tinylog.Logger;
 
 import java.io.IOException;
@@ -22,6 +24,7 @@ public class RecordBatch {
     private final String batchId; // Unique identifier for this batch
     private volatile Long sentTimeMs; // Timestamp when batch was sent
     private volatile String topicName; // Primary topic for this batch
+    private final CompressionType compressionType; // Compression type for this batch
 
     private static final int DEFAULT_BATCH_SIZE = 10_240; // default batch size: 10 KB = 10,240 bytes
 
@@ -47,15 +50,20 @@ public class RecordBatch {
     }
 
     public RecordBatch(int maxBatchSizeInBytes) {
-        this(maxBatchSizeInBytes, null);
+        this(maxBatchSizeInBytes, null, CompressionType.NONE);
+    }
+    
+    public RecordBatch(int maxBatchSizeInBytes, CompressionType compressionType) {
+        this(maxBatchSizeInBytes, null, compressionType);
     }
     
     /**
-     * Create a RecordBatch with optional BufferPool support
+     * Create a RecordBatch with optional BufferPool support and compression
      * @param maxBatchSizeInBytes Maximum size of the batch
      * @param bufferPool Optional buffer pool for memory management
+     * @param compressionType Compression type for the batch
      */
-    public RecordBatch(int maxBatchSizeInBytes, BufferPool bufferPool) {
+    public RecordBatch(int maxBatchSizeInBytes, BufferPool bufferPool, CompressionType compressionType) {
         this.maxBatchSizeInBytes = maxBatchSizeInBytes;
         this.currBatchSizeInBytes = 0;
         this.numRecords = 0;
@@ -63,6 +71,7 @@ public class RecordBatch {
         this.recordMetadataList = new ArrayList<>();
         this.recordFutures = new ArrayList<>();
         this.createdTimeMs = System.currentTimeMillis();
+        this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
         
         // Initialize batch fields
         this.batchId = UUID.randomUUID().toString();
@@ -203,8 +212,36 @@ public class RecordBatch {
         System.out.println("Number of Records: " + getRecordCount());
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
         System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
+        System.out.println("Compression: " + compressionType);
         System.out.println("Created: " + createdTimeMs + "ms ago");
         System.out.println("Topic: " + topicName + "\n");
+    }
+    
+    /**
+     * Get the compression type for this batch
+     */
+    public CompressionType getCompressionType() {
+        return compressionType;
+    }
+    
+    /**
+     * Get the compressed batch data. This compresses the batch buffer
+     * using the configured compression type.
+     * 
+     * @return Compressed batch data as ByteBuffer
+     */
+    public ByteBuffer getCompressedBatchData() {
+        if (batch == null || currBatchSizeInBytes == 0) {
+            return ByteBuffer.allocate(0);
+        }
+        
+        // Create a read-only view of the current batch data
+        ByteBuffer dataToCompress = batch.duplicate();
+        dataToCompress.rewind();
+        dataToCompress.limit(currBatchSizeInBytes);
+        
+        // Compress using the batch's compression type
+        return CompressionUtils.compress(dataToCompress, compressionType);
     }
     
     /**

@@ -4,6 +4,7 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
+import commons.compression.CompressionType;
 import commons.FluxExecutor;
 import commons.utils.PartitionSelector;
 import io.grpc.Grpc;
@@ -63,10 +64,14 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
         maxRetries = Integer.parseInt(props.getProperty("retries", "3")); // 3 retries default
         retryBackoffMs = Long.parseLong(props.getProperty("retry.backoff.ms", "1000")); // 1s backoff default
         
-        recordAccumulator = new RecordAccumulator(batchSize, numPartitions, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory);
+        // Parse compression type from properties
+        String compressionTypeStr = props.getProperty("compression.type", "none");
+        CompressionType compressionType = CompressionType.fromName(compressionTypeStr);
         
-        Logger.info("FluxProducer initialized - Partitions: {}, BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, BatchThreshold: {}, BufferMemory: {}MB, MaxRetries: {}, RetryBackoff: {}ms", 
-                   numPartitions, batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024), maxRetries, retryBackoffMs);
+        recordAccumulator = new RecordAccumulator(batchSize, numPartitions, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory, compressionType);
+        
+        Logger.info("FluxProducer initialized - Partitions: {}, BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, BatchThreshold: {}, BufferMemory: {}MB, MaxRetries: {}, RetryBackoff: {}ms, Compression: {}", 
+                   numPartitions, batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024), maxRetries, retryBackoffMs, compressionType);
     }
 
     public FluxProducer(long flushDelayInterval) {
@@ -228,6 +233,12 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 .map(batch -> batch.getBatchId())
                 .toList();
         
+        // Get compression type from first batch (all batches should have same compression type)
+        CompressionType compressionType = CompressionType.NONE;
+        if (!batchesToSend.isEmpty()) {
+            compressionType = batchesToSend.values().iterator().next().getCompressionType();
+        }
+        
         // Notify accumulator that batches are being sent
         for (String batchId : batchIds) {
             recordAccumulator.markBatchSending(batchId);
@@ -247,6 +258,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                         )
                         .toList()
                 )
+                .setCompressionType(proto.CompressionType.forNumber(compressionType.getId()))
                 .build();
 
         Logger.info("Sending {} records in {} batches (size: {} bytes)", 
