@@ -26,6 +26,7 @@ public class RecordAccumulator {
     private Map<TopicPartition, Deque<RecordBatch>> partitionBatches; // Per topic-partition batch queues
     private final Map<TopicPartition, AtomicInteger> inFlightBatches; // Track in-flight batches per partition
     private final int numPartitions;
+    private int drainIndex = 0; // Round-robin index for fair partition draining
 
     public RecordAccumulator(int numPartitions) {
         this(new ProducerConfig(), numPartitions);
@@ -291,11 +292,23 @@ public class RecordAccumulator {
     public synchronized Map<TopicPartition, RecordBatch> drain(String brokerAddress, List<TopicPartition> readyPartitions) throws IOException {
         Map<TopicPartition, RecordBatch> drainedBatches = new ConcurrentHashMap<>();
         
-        for (TopicPartition topicPartition : readyPartitions) {
+        if (readyPartitions.isEmpty()) {
+            return drainedBatches;
+        }
+        
+        // Use round-robin to avoid starvation: start from where we left off last time
+        int partitionCount = readyPartitions.size();
+        int start = drainIndex % partitionCount;
+        int current = start;
+        
+        do {
+            TopicPartition topicPartition = readyPartitions.get(current);
+            
             // If broker address is specified, only drain partitions for that broker
             if (brokerAddress != null) {
                 String partitionBroker = getBrokerForPartition(topicPartition);
                 if (partitionBroker == null || !partitionBroker.equals(brokerAddress)) {
+                    current = (current + 1) % partitionCount;
                     continue; // Skip partitions not on this broker
                 }
             }
@@ -318,7 +331,12 @@ public class RecordAccumulator {
                                topicPartition, brokerAddress, batch.getDataSize(), batch.isCompressed(), deque.size());
                 }
             }
-        }
+            
+            current = (current + 1) % partitionCount;
+        } while (current != start);
+        
+        // Update drain index for next iteration to ensure fairness
+        drainIndex = (drainIndex + 1) % partitionCount;
         
         return drainedBatches;
     }
