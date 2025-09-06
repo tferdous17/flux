@@ -18,6 +18,7 @@ import proto.*;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -116,91 +117,127 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
 
             Logger.info("COMMENCING BUFFER FLUSH for {} ready topic-partitions.", readyPartitions.size());
 
-            // Drain ready batches from accumulator
-            Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
-
-            // Track in-flight batches
-            for (TopicPartition topicPartition : drainedBatches.keySet()) {
-                accumulator.incrementInFlight(topicPartition);
+            // Group ready partitions by broker
+            Map<String, List<TopicPartition>> partitionsByBroker = new HashMap<>();
+            for (TopicPartition topicPartition : readyPartitions) {
+                String broker = accumulator.getBrokerForPartition(topicPartition);
+                if (broker != null) {
+                    partitionsByBroker.computeIfAbsent(broker, k -> new ArrayList<>()).add(topicPartition);
+                } else {
+                    Logger.warn("Could not find broker for partition {}", topicPartition);
+                }
             }
 
-            // Convert batches to records for gRPC request
-            List<proto.Record> records = new ArrayList<>();
-            for (Map.Entry<TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
-                TopicPartition topicPartition = entry.getKey();
-                RecordBatch batch = entry.getValue();
+            Logger.info("Grouped {} partitions across {} brokers", readyPartitions.size(), partitionsByBroker.size());
+
+            // Send batches to each broker separately
+            for (Map.Entry<String, List<TopicPartition>> brokerEntry : partitionsByBroker.entrySet()) {
+                String brokerAddress = brokerEntry.getKey();
+                List<TopicPartition> brokerPartitions = brokerEntry.getValue();
                 
-                // Get batch data (will be compressed if enabled)
-                byte[] batchData = batch.getData();
+                // Drain batches for this specific broker
+                Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(brokerAddress, brokerPartitions);
                 
-                proto.Record record = proto.Record
+                if (drainedBatches.isEmpty()) {
+                    continue;
+                }
+
+                // Track in-flight batches
+                for (TopicPartition topicPartition : drainedBatches.keySet()) {
+                    accumulator.incrementInFlight(topicPartition);
+                }
+
+                // Convert batches to records for gRPC request
+                List<proto.Record> records = new ArrayList<>();
+                for (Map.Entry<TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
+                    TopicPartition topicPartition = entry.getKey();
+                    RecordBatch batch = entry.getValue();
+                    
+                    // Get batch data (will be compressed if enabled)
+                    byte[] batchData = batch.getData();
+                    
+                    proto.Record record = proto.Record
+                            .newBuilder()
+                            .setTopic(topicPartition.getTopic())
+                            .setTargetPartition(topicPartition.getPartition())
+                            .setData(ByteString.copyFrom(batchData))
+                            .build();
+                    records.add(record);
+                    
+                    Logger.info("Adding batch from {} with {} bytes (compressed: {}) for broker {}", 
+                               topicPartition, batchData.length, batch.isCompressed(), brokerAddress);
+                }
+
+                PublishDataToBrokerRequest request = PublishDataToBrokerRequest
                         .newBuilder()
-                        .setTopic(topicPartition.getTopic())
-                        .setTargetPartition(topicPartition.getPartition())
-                        .setData(ByteString.copyFrom(batchData))
+                        .addAllRecords(records)
                         .build();
-                records.add(record);
+
+                System.out.println("SIZE OF REQ for broker " + brokerAddress + ": " + request.getSerializedSize());
+
+                // Create gRPC stub for this specific broker
+                ManagedChannel brokerChannel = Grpc.newChannelBuilder(brokerAddress, InsecureChannelCredentials.create()).build();
+                PublishToBrokerGrpc.PublishToBrokerFutureStub brokerStub = PublishToBrokerGrpc.newFutureStub(brokerChannel);
+
+                // Send the request and receive the response (acknowledgement)
+                Logger.info("SENDING BATCH OF {} RECORDS FROM {} PARTITIONS TO BROKER {}.", 
+                           records.size(), drainedBatches.size(), brokerAddress);
+                ListenableFuture<BrokerToPublisherAck> response = brokerStub.send(request);
                 
-                Logger.info("Adding batch from {} with {} bytes (compressed: {})", 
-                           topicPartition, batchData.length, batch.isCompressed());
-            }
-
-            PublishDataToBrokerRequest request = PublishDataToBrokerRequest
-                    .newBuilder()
-                    .addAllRecords(records)
-                    .build();
-
-            System.out.println("SIZE OF REQ: " + request.getSerializedSize());
-
-            // Send the request and receive the response (acknowledgement)
-            Logger.info("SENDING BATCH OF {} RECORDS FROM {} PARTITIONS.", records.size(), drainedBatches.size());
-            ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
-            
-            // Store drained batches for retry handling
-            final Map<TopicPartition, RecordBatch> batchesForRetry = drainedBatches;
-            
-            Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
-                @Override
-                public void onSuccess(BrokerToPublisherAck response) {
-                    Logger.info("Received BrokerToPublisherAck: Acknowledgement={}, Status={}, RecordOffset={}",
-                            response.getAcknowledgement(),
-                            response.getStatus(),
-                            response.getRecordOffset()
-                    );
-                    
-                    // Decrement in-flight count for successful batches
-                    for (TopicPartition topicPartition : batchesForRetry.keySet()) {
-                        accumulator.decrementInFlight(topicPartition);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    Logger.error("Failed to send batch to broker", t);
-                    
-                    // Handle retry logic for failed batches
-                    for (Map.Entry<TopicPartition, RecordBatch> entry : batchesForRetry.entrySet()) {
-                        TopicPartition topicPartition = entry.getKey();
-                        RecordBatch batch = entry.getValue();
+                // Store drained batches for retry handling
+                final Map<TopicPartition, RecordBatch> batchesForRetry = drainedBatches;
+                final String brokerAddr = brokerAddress;
+                
+                Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
+                    @Override
+                    public void onSuccess(BrokerToPublisherAck response) {
+                        Logger.info("Received BrokerToPublisherAck from {}: Acknowledgement={}, Status={}, RecordOffset={}",
+                                brokerAddr,
+                                response.getAcknowledgement(),
+                                response.getStatus(),
+                                response.getRecordOffset()
+                        );
                         
-                        // Decrement in-flight count
-                        accumulator.decrementInFlight(topicPartition);
-                        
-                        // Check if we should retry
-                        if (batch.getRetryCount() < accumulator.getConfig().getRetries()) {
-                            // Increment retry count and re-enqueue
-                            batch.incrementRetryCount();
-                            accumulator.reenqueue(topicPartition, batch);
-                            Logger.info("Re-enqueued batch for {} (retry {}/{})", 
-                                       topicPartition, batch.getRetryCount(), accumulator.getConfig().getRetries());
-                        } else {
-                            // Max retries exceeded, drop the batch
-                            Logger.error("Dropping batch for {} after {} retries", 
-                                        topicPartition, batch.getRetryCount());
+                        // Decrement in-flight count for successful batches
+                        for (TopicPartition topicPartition : batchesForRetry.keySet()) {
+                            accumulator.decrementInFlight(topicPartition);
                         }
+                        
+                        // Close the broker-specific channel
+                        brokerChannel.shutdown();
                     }
-                }
-            }, FluxExecutor.getExecutorService());
+
+                    @Override
+                    public void onFailure(Throwable t) {
+                        Logger.error("Failed to send batch to broker " + brokerAddr, t);
+                        
+                        // Handle retry logic for failed batches
+                        for (Map.Entry<TopicPartition, RecordBatch> entry : batchesForRetry.entrySet()) {
+                            TopicPartition topicPartition = entry.getKey();
+                            RecordBatch batch = entry.getValue();
+                            
+                            // Decrement in-flight count
+                            accumulator.decrementInFlight(topicPartition);
+                            
+                            // Check if we should retry
+                            if (batch.getRetryCount() < accumulator.getConfig().getRetries()) {
+                                // Increment retry count and re-enqueue
+                                batch.incrementRetryCount();
+                                accumulator.reenqueue(topicPartition, batch);
+                                Logger.info("Re-enqueued batch for {} (retry {}/{})", 
+                                           topicPartition, batch.getRetryCount(), accumulator.getConfig().getRetries());
+                            } else {
+                                // Max retries exceeded, drop the batch
+                                Logger.error("Dropping batch for {} after {} retries", 
+                                            topicPartition, batch.getRetryCount());
+                            }
+                        }
+                        
+                        // Close the broker-specific channel
+                        brokerChannel.shutdown();
+                    }
+                }, FluxExecutor.getExecutorService());
+            }
             
         } catch (IOException e) {
             Logger.error("Error during buffer flush", e);

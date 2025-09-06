@@ -3,12 +3,17 @@ package producer;
 import commons.CompressionType;
 import commons.utils.PartitionSelector;
 import metadata.InMemoryTopicMetadataRepository;
+import metadata.Metadata;
+import metadata.snapshots.ClusterSnapshot;
+import metadata.snapshots.PartitionMetadata;
+import metadata.snapshots.TopicMetadata;
 import org.tinylog.Logger;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -204,6 +209,33 @@ public class RecordAccumulator {
     }
     
     /**
+     * Get the broker address for a given topic-partition
+     * @param topicPartition The topic-partition to lookup
+     * @return The broker address (e.g., "localhost:50051") or null if not found
+     */
+    public String getBrokerForPartition(TopicPartition topicPartition) {
+        ClusterSnapshot snapshot = Metadata.getInstance().getClusterMetadataSnapshot().get();
+        
+        // Get topic metadata
+        TopicMetadata topicMetadata = snapshot.topics().get(topicPartition.getTopic());
+        if (topicMetadata == null) {
+            Logger.warn("Topic {} not found in metadata", topicPartition.getTopic());
+            return null;
+        }
+        
+        // Get partition metadata
+        PartitionMetadata partitionMetadata = topicMetadata.partitions().get(topicPartition.getPartition());
+        if (partitionMetadata == null) {
+            Logger.warn("Partition {} for topic {} not found in metadata", 
+                       topicPartition.getPartition(), topicPartition.getTopic());
+            return null;
+        }
+        
+        // Return the broker ID (which is the broker address in our implementation)
+        return partitionMetadata.brokerId();
+    }
+    
+    /**
      * Get list of topic-partitions with ready batches
      * A batch is ready if it's full OR has exceeded linger.ms
      * Also checks in-flight limits to prevent overwhelming the broker
@@ -252,14 +284,23 @@ public class RecordAccumulator {
     }
     
     /**
-     * Drain ready batches from the accumulator
+     * Drain ready batches from the accumulator for a specific broker
+     * @param brokerAddress The broker address to drain batches for (if null, drains all)
      * @param readyPartitions List of TopicPartition to drain
      * @return Map of drained batches by TopicPartition
      */
-    public synchronized Map<TopicPartition, RecordBatch> drain(List<TopicPartition> readyPartitions) throws IOException {
+    public synchronized Map<TopicPartition, RecordBatch> drain(String brokerAddress, List<TopicPartition> readyPartitions) throws IOException {
         Map<TopicPartition, RecordBatch> drainedBatches = new ConcurrentHashMap<>();
         
         for (TopicPartition topicPartition : readyPartitions) {
+            // If broker address is specified, only drain partitions for that broker
+            if (brokerAddress != null) {
+                String partitionBroker = getBrokerForPartition(topicPartition);
+                if (partitionBroker == null || !partitionBroker.equals(brokerAddress)) {
+                    continue; // Skip partitions not on this broker
+                }
+            }
+            
             Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
             if (deque != null && !deque.isEmpty()) {
                 // Remove the first (oldest) batch from the deque
@@ -274,8 +315,8 @@ public class RecordAccumulator {
                     free.deallocate(batch.getBuffer(), batch.getInitialCapacity());
                     
                     drainedBatches.put(topicPartition, batch);
-                    Logger.info("Drained batch from {} - size: {} bytes, compressed: {}, remaining batches: {}",
-                               topicPartition, batch.getDataSize(), batch.isCompressed(), deque.size());
+                    Logger.info("Drained batch from {} for broker {} - size: {} bytes, compressed: {}, remaining batches: {}",
+                               topicPartition, brokerAddress, batch.getDataSize(), batch.isCompressed(), deque.size());
                 }
             }
         }

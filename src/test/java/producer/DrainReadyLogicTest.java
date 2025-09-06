@@ -148,8 +148,8 @@ public class DrainReadyLogicTest {
         long initialMemoryUsage = accumulator.getTotalBytesUsed();
         assertTrue(initialMemoryUsage > 0);
         
-        // Drain ready batches
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
+        // Drain ready batches (pass null to drain all partitions)
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
         
         // Verify drained batches
         assertEquals(2, drainedBatches.size());
@@ -188,8 +188,8 @@ public class DrainReadyLogicTest {
         // Force the batch to be ready by making it full
         List<TopicPartition> readyPartitions = List.of(new TopicPartition("TestTopic", 0));
         
-        // Drain the batch
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
+        // Drain the batch (pass null to drain all partitions)
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
         
         // Verify compression was applied
         RecordBatch drainedBatch = drainedBatches.get(new TopicPartition("TestTopic", 0));
@@ -214,7 +214,7 @@ public class DrainReadyLogicTest {
         accumulator.append(ProducerRecordCodec.serialize(record, String.class, String.class));
         
         List<TopicPartition> readyPartitions = List.of(new TopicPartition("TestTopic", 0));
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
         
         // Verify compression was not applied
         RecordBatch drainedBatch = drainedBatches.get(new TopicPartition("TestTopic", 0));
@@ -227,7 +227,7 @@ public class DrainReadyLogicTest {
         RecordAccumulator accumulator = new RecordAccumulator(new ProducerConfig(), 3);
         
         // Drain with empty list should return empty map
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(List.of());
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, List.of());
         assertTrue(drainedBatches.isEmpty());
     }
     
