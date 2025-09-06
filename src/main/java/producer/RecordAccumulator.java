@@ -6,24 +6,39 @@ import org.tinylog.Logger;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RecordAccumulator {
     static private final int DEFAULT_BATCH_SIZE = 10_240; // 10 KB
+    static private final int DEFAULT_MAX_BUFFER_SIZE = 32 * 1024 * 1024; // 32 MB
 
     private final int batchSize;
+    private final int maxBufferSize;
+    private volatile long totalBytesUsed; // Track memory usage across all batches
     private Map<Integer, RecordBatch> partitionBatches; // Per-partition batches
     private final int numPartitions;
 
     public RecordAccumulator(int numPartitions) {
         this.batchSize = validateBatchSize(DEFAULT_BATCH_SIZE);
-        this.partitionBatches = new HashMap<>();
+        this.maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
+        this.totalBytesUsed = 0;
+        this.partitionBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
     }
 
     public RecordAccumulator(int batchSize, int numPartitions) {
         this.batchSize = validateBatchSize(batchSize);
-        this.partitionBatches = new HashMap<>();
+        this.maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
+        this.totalBytesUsed = 0;
+        this.partitionBatches = new ConcurrentHashMap<>();
+        this.numPartitions = numPartitions;
+    }
+
+    public RecordAccumulator(int batchSize, int maxBufferSize, int numPartitions) {
+        this.batchSize = validateBatchSize(batchSize);
+        this.maxBufferSize = maxBufferSize;
+        this.totalBytesUsed = 0;
+        this.partitionBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
     }
 
@@ -67,6 +82,14 @@ public class RecordAccumulator {
     4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
     */
     public void append(byte[] serializedRecord) throws IOException {
+        // Check memory limits before proceeding
+        if (totalBytesUsed + serializedRecord.length > maxBufferSize) {
+            throw new IllegalStateException(
+                "Cannot append record: would exceed maximum buffer size of " + maxBufferSize + " bytes. " +
+                "Current usage: " + totalBytesUsed + " bytes, Record size: " + serializedRecord.length + " bytes."
+            );
+        }
+
         // Extract partition from the serialized record
         int partition = extractPartitionFromRecord(serializedRecord);
         RecordBatch currentBatch = partitionBatches.get(partition);
@@ -87,7 +110,10 @@ public class RecordAccumulator {
                     throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
                 }
             }
-            Logger.info("Record appended successfully to partition " + partition + ".");
+            
+            // Update total bytes used
+            totalBytesUsed += serializedRecord.length;
+            Logger.info("Record appended successfully to partition " + partition + ". Total bytes used: " + totalBytesUsed);
         } catch (Exception e) {
             Logger.error("Failed to append record: " + e.getMessage(), e);
             throw e;
@@ -112,15 +138,31 @@ public class RecordAccumulator {
      * Get all partition batches
      */
     public Map<Integer, RecordBatch> getPartitionBatches() {
-        return new HashMap<>(partitionBatches); // Return copy to prevent external modification
+        return new ConcurrentHashMap<>(partitionBatches); // Return copy to prevent external modification
     }
 
     public int getBatchSize() {
         return batchSize;
     }
 
+    public long getTotalBytesUsed() {
+        return totalBytesUsed;
+    }
+
+    public int getMaxBufferSize() {
+        return maxBufferSize;
+    }
+
+    /**
+     * Helper method to decrease memory tracking when a batch is removed
+     */
+    private void decreaseMemoryUsage(RecordBatch batch) {
+        totalBytesUsed -= batch.getCurrBatchSizeInBytes();
+    }
+
     public void printRecord() {
         Logger.info("Batch Size: " + getBatchSize());
+        Logger.info("Total Memory Used: " + totalBytesUsed + " / " + maxBufferSize + " bytes");
         Logger.info("Partition Batches:");
         
         partitionBatches.forEach((partition, batch) -> {
