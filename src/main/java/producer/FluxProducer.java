@@ -119,6 +119,11 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             // Drain ready batches from accumulator
             Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(readyPartitions);
 
+            // Track in-flight batches
+            for (TopicPartition topicPartition : drainedBatches.keySet()) {
+                accumulator.incrementInFlight(topicPartition);
+            }
+
             // Convert batches to records for gRPC request
             List<proto.Record> records = new ArrayList<>();
             for (Map.Entry<TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
@@ -150,6 +155,10 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             // Send the request and receive the response (acknowledgement)
             Logger.info("SENDING BATCH OF {} RECORDS FROM {} PARTITIONS.", records.size(), drainedBatches.size());
             ListenableFuture<BrokerToPublisherAck> response = publishToBrokerFutureStub.send(request);
+            
+            // Store drained batches for retry handling
+            final Map<TopicPartition, RecordBatch> batchesForRetry = drainedBatches;
+            
             Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
                 @Override
                 public void onSuccess(BrokerToPublisherAck response) {
@@ -158,12 +167,38 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                             response.getStatus(),
                             response.getRecordOffset()
                     );
+                    
+                    // Decrement in-flight count for successful batches
+                    for (TopicPartition topicPartition : batchesForRetry.keySet()) {
+                        accumulator.decrementInFlight(topicPartition);
+                    }
                 }
 
                 @Override
                 public void onFailure(Throwable t) {
-                    // TODO: Will need actual retry logic eventually.. gRPC should have some built in retry mechanisms to use
                     Logger.error("Failed to send batch to broker", t);
+                    
+                    // Handle retry logic for failed batches
+                    for (Map.Entry<TopicPartition, RecordBatch> entry : batchesForRetry.entrySet()) {
+                        TopicPartition topicPartition = entry.getKey();
+                        RecordBatch batch = entry.getValue();
+                        
+                        // Decrement in-flight count
+                        accumulator.decrementInFlight(topicPartition);
+                        
+                        // Check if we should retry
+                        if (batch.getRetryCount() < accumulator.getConfig().getRetries()) {
+                            // Increment retry count and re-enqueue
+                            batch.incrementRetryCount();
+                            accumulator.reenqueue(topicPartition, batch);
+                            Logger.info("Re-enqueued batch for {} (retry {}/{})", 
+                                       topicPartition, batch.getRetryCount(), accumulator.getConfig().getRetries());
+                        } else {
+                            // Max retries exceeded, drop the batch
+                            Logger.error("Dropping batch for {} after {} retries", 
+                                        topicPartition, batch.getRetryCount());
+                        }
+                    }
                 }
             }, FluxExecutor.getExecutorService());
             

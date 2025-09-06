@@ -163,6 +163,7 @@ public class RecordAccumulator {
     /**
      * Get list of topic-partitions with ready batches
      * A batch is ready if it's full OR has exceeded linger.ms
+     * Also checks in-flight limits to prevent overwhelming the broker
      * @return List of TopicPartition with ready batches
      */
     public List<TopicPartition> ready() {
@@ -170,8 +171,18 @@ public class RecordAccumulator {
         long now = System.currentTimeMillis();
         
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : partitionBatches.entrySet()) {
+            TopicPartition topicPartition = entry.getKey();
             Deque<RecordBatch> deque = entry.getValue();
+            
             if (deque != null && !deque.isEmpty()) {
+                // Check if we've hit the in-flight limit for this partition
+                int inFlightCount = getInFlightCount(topicPartition);
+                if (inFlightCount >= config.getMaxInFlightRequests()) {
+                    Logger.debug("{} has {} in-flight batches, skipping (max: {})", 
+                               topicPartition, inFlightCount, config.getMaxInFlightRequests());
+                    continue;
+                }
+                
                 // Check the first (oldest) batch in the deque
                 RecordBatch firstBatch = deque.peekFirst();
                 if (firstBatch != null) {
@@ -179,12 +190,12 @@ public class RecordAccumulator {
                     boolean hasTimedOut = (now - firstBatch.getCreationTime()) >= config.getLingerMs();
                     
                     if (isFull || hasTimedOut) {
-                        readyPartitions.add(entry.getKey());
+                        readyPartitions.add(topicPartition);
                         if (isFull) {
-                            Logger.info("{} batch is ready - batch is full", entry.getKey());
+                            Logger.info("{} batch is ready - batch is full", topicPartition);
                         } else {
                             Logger.info("{} batch is ready - exceeded linger.ms ({}ms)", 
-                                       entry.getKey(), config.getLingerMs());
+                                       topicPartition, config.getLingerMs());
                         }
                     }
                 }
@@ -295,5 +306,22 @@ public class RecordAccumulator {
     public int getInFlightCount(TopicPartition topicPartition) {
         AtomicInteger count = inFlightBatches.get(topicPartition);
         return count != null ? count.get() : 0;
+    }
+    
+    /**
+     * Re-enqueue a failed batch back to the front of the partition's queue
+     * This preserves ordering for retries
+     * @param topicPartition The topic-partition to re-enqueue to
+     * @param batch The batch to re-enqueue
+     */
+    public void reenqueue(TopicPartition topicPartition, RecordBatch batch) {
+        Deque<RecordBatch> deque = partitionBatches.computeIfAbsent(
+            topicPartition, k -> new ArrayDeque<>());
+        
+        // Put batch back at front to preserve order
+        deque.addFirst(batch);
+        
+        Logger.info("Re-enqueued batch for {} with retry count {}", 
+                    topicPartition, batch.getRetryCount());
     }
 }
