@@ -1,6 +1,7 @@
 package producer;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -10,6 +11,26 @@ import java.util.Properties;
 public class FluxProducerIntegrationTest {
     
     private Properties props;
+    
+    @BeforeAll
+    public static void setUpServer() throws IOException {
+        SharedTestServer.startServer();
+        // Initialize Metadata singleton after server is ready
+        // Retry a few times to ensure server is fully started
+        for (int i = 0; i < 3; i++) {
+            try {
+                metadata.Metadata.getInstance();
+                break;
+            } catch (Exception e) {
+                if (i == 2) throw e;
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
     
     @BeforeEach
     public void setup() {

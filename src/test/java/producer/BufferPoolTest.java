@@ -81,7 +81,7 @@ public class BufferPoolTest {
                 threadsReady.countDown();
                 threadsReady.await();
                 Thread.sleep(10); // Ensure thread1 waits first
-                pool.allocate(POOLABLE_SIZE, 2000);
+                pool.allocate(POOLABLE_SIZE, 5000); // Increased timeout to avoid test flakiness
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

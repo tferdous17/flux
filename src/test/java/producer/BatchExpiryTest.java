@@ -4,8 +4,6 @@ import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import proto.Topic;
-import server.internal.Broker;
 
 import java.io.IOException;
 import java.util.List;
@@ -22,16 +20,7 @@ public class BatchExpiryTest {
     
     @BeforeAll
     public static void setUp() throws IOException {
-        // Create broker and register TestTopic for tests that need it
-        Broker broker = new Broker();
-        
-        Topic testTopic = Topic.newBuilder()
-                .setTopicName("TestTopic")
-                .setNumPartitions(5)
-                .setReplicationFactor(1)
-                .build();
-        
-        broker.createTopics(List.of(testTopic));
+        SharedTestServer.startServer();
     }
     
     @Test
@@ -140,7 +129,8 @@ public class BatchExpiryTest {
         // Create config with moderate timeouts
         Properties props = new Properties();
         props.setProperty("delivery.timeout.ms", "150"); // 150ms timeout
-        props.setProperty("batch.size", "100"); // Small batch for testing
+        props.setProperty("batch.size", "512"); // Small batch for testing
+        props.setProperty("linger.ms", "50"); // 50ms linger
         ProducerConfig config = new ProducerConfig(props);
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
@@ -155,11 +145,14 @@ public class BatchExpiryTest {
         // Wait for it to age
         Thread.sleep(160); // Past delivery timeout
         
-        // Add new batch that should be ready (full)
+        // Add new batch that should be ready
         ProducerRecord<String, String> newRecord = new ProducerRecord<>(
-                "TestTopic", 1, System.currentTimeMillis(), "key", "x".repeat(95), headers
+                "TestTopic", 1, System.currentTimeMillis(), "key", "x".repeat(450), headers
         );
         accumulator.append(ProducerRecordCodec.serialize(newRecord, String.class, String.class));
+        
+        // Wait for linger timeout for new batch
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
         
         // Call ready()
         List<TopicPartition> readyPartitions = accumulator.ready();

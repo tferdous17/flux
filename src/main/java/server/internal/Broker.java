@@ -82,17 +82,17 @@ public class Broker implements Controller {
         int numPartitionsToCreate = firstTopic.getNumPartitions();
         int replicationFactor = firstTopic.getReplicationFactor();
 
-        // Will throw runtime exception if it can not validate this creation request
-        validateTopicCreation(topicName, numPartitionsToCreate, replicationFactor);
+            // Will throw runtime exception if it can not validate this creation request
+            validateTopicCreation(topicName, numPartitionsToCreate, replicationFactor);
 
-        List<Partition> newTopicPartitions = new ArrayList<>();
-        // Each topic's partitions start from ID 0
-        for (int i = 0; i < numPartitionsToCreate; i++) {
-            Partition p = new Partition(topicName, i);
-            newTopicPartitions.add(p);
-            this.numPartitions++;
-        }
-        this.topicPartitions.put(topicName, newTopicPartitions);
+            List<Partition> newTopicPartitions = new ArrayList<>();
+            // Each topic's partitions start from ID 0
+            for (int i = 0; i < numPartitionsToCreate; i++) {
+                Partition p = new Partition(topicName, i);
+                newTopicPartitions.add(p);
+                this.numPartitions++;
+            }
+            this.topicPartitions.put(topicName, newTopicPartitions);
 
         FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
@@ -186,12 +186,12 @@ public class Broker implements Controller {
 
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
         // TODO: BROKEN VIA MERGE CONFLICT -- GOING TO PURPOSELY FIX IN SEPARATE PR
-        // partitions.forEach(p -> {
-        //     partitionMetadataMap.put(
-        //             p.getPartitionId(),
-        //             new PartitionMetadata(p.getPartitionId(), this.brokerId)
-        //     );
-        // });
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
 
         this.controllerMetadata.set(new BrokerMetadata(
                 this.brokerId,
@@ -206,12 +206,12 @@ public class Broker implements Controller {
         // Periodically the broker will send its most up-to-date metadata to the Controller node
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
         // TODO: SAME AS ABOVE TODO
-        // partitions.forEach(p -> {
-        //     partitionMetadataMap.put(
-        //             p.getPartitionId(),
-        //             new PartitionMetadata(p.getPartitionId(), this.brokerId)
-        //     );
-        // });
+        partitions.forEach(p -> {
+            partitionMetadataMap.put(
+                    p.getPartitionId(),
+                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
+            );
+        });
         if (!isActiveController) {
             UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
                     .newBuilder()

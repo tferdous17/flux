@@ -4,8 +4,6 @@ import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import proto.Topic;
-import server.internal.Broker;
 
 import java.io.IOException;
 import java.util.List;
@@ -22,16 +20,7 @@ public class InFlightTrackingTest {
     
     @BeforeAll
     public static void setUp() throws IOException {
-        // Create broker and register TestTopic for tests that need it
-        Broker broker = new Broker();
-        
-        Topic testTopic = Topic.newBuilder()
-                .setTopicName("TestTopic")
-                .setNumPartitions(5)
-                .setReplicationFactor(1)
-                .build();
-        
-        broker.createTopics(List.of(testTopic));
+        SharedTestServer.startServer();
     }
     
     @Test
@@ -64,11 +53,12 @@ public class InFlightTrackingTest {
     }
     
     @Test
-    public void testInFlightLimitEnforcement() throws IOException {
+    public void testInFlightLimitEnforcement() throws IOException, InterruptedException {
         // Create config with low max in-flight requests
         Properties props = new Properties();
         props.setProperty("max.in.flight.requests", "2");
-        props.setProperty("batch.size", "100"); // Small batch to easily make them full
+        props.setProperty("batch.size", "512"); // Small batch to easily make them full
+        props.setProperty("linger.ms", "50"); // 50ms linger
         ProducerConfig config = new ProducerConfig(props);
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
@@ -77,9 +67,12 @@ public class InFlightTrackingTest {
         
         // Fill a batch to make it ready
         ProducerRecord<String, String> record = new ProducerRecord<>(
-                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(95), headers
+                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(450), headers
         );
         accumulator.append(ProducerRecordCodec.serialize(record, String.class, String.class));
+        
+        // Wait for linger timeout
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
         
         // Initially, batch should be ready
         List<TopicPartition> readyPartitions = accumulator.ready();
@@ -91,8 +84,9 @@ public class InFlightTrackingTest {
         accumulator.incrementInFlight(tp);
         assertEquals(2, accumulator.getInFlightCount(tp));
         
-        // Create a new full batch
+        // Create a new batch (will be ready due to timeout)
         accumulator.append(ProducerRecordCodec.serialize(record, String.class, String.class));
+        Thread.sleep(60); // Wait for linger timeout
         
         // Now ready() should skip this partition due to in-flight limit
         readyPartitions = accumulator.ready();
@@ -126,11 +120,12 @@ public class InFlightTrackingTest {
     }
     
     @Test
-    public void testInFlightLimitPerPartition() throws IOException {
+    public void testInFlightLimitPerPartition() throws IOException, InterruptedException {
         // Create config with max in-flight = 1
         Properties props = new Properties();
         props.setProperty("max.in.flight.requests", "1");
-        props.setProperty("batch.size", "100");
+        props.setProperty("batch.size", "512");
+        props.setProperty("linger.ms", "50"); // 50ms linger
         ProducerConfig config = new ProducerConfig(props);
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
@@ -140,14 +135,17 @@ public class InFlightTrackingTest {
         
         // Fill batches for two partitions
         ProducerRecord<String, String> record0 = new ProducerRecord<>(
-                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(95), headers
+                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(450), headers
         );
         ProducerRecord<String, String> record1 = new ProducerRecord<>(
-                "TestTopic", 1, System.currentTimeMillis(), "key", "x".repeat(95), headers
+                "TestTopic", 1, System.currentTimeMillis(), "key", "x".repeat(450), headers
         );
         
         accumulator.append(ProducerRecordCodec.serialize(record0, String.class, String.class));
         accumulator.append(ProducerRecordCodec.serialize(record1, String.class, String.class));
+        
+        // Wait for linger timeout
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
         
         // Both should be ready initially
         List<TopicPartition> readyPartitions = accumulator.ready();
@@ -173,6 +171,7 @@ public class InFlightTrackingTest {
         
         // Add another batch to partition 0
         accumulator.append(ProducerRecordCodec.serialize(record0, String.class, String.class));
+        Thread.sleep(60); // Wait for linger timeout
         
         // Partition 0 should be ready, partition 1 still blocked
         readyPartitions = accumulator.ready();

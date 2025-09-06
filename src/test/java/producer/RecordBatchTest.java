@@ -1,5 +1,6 @@
 package producer;
 
+import commons.CompressionType;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -39,7 +40,7 @@ public class RecordBatchTest {
 
     @Test
     public void testCompression() throws IOException {
-        RecordBatch batch = new RecordBatch(10000);
+        RecordBatch batch = new RecordBatch(10000, CompressionType.GZIP);
 
         // Add repetitive data
         String repetitive = "test ".repeat(100);

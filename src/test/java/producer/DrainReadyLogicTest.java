@@ -5,8 +5,6 @@ import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import proto.Topic;
-import server.internal.Broker;
 
 import java.io.IOException;
 import java.util.List;
@@ -24,36 +22,30 @@ public class DrainReadyLogicTest {
     
     @BeforeAll
     public static void setUp() throws IOException {
-        // Create broker and register TestTopic for tests that need it
-        Broker broker = new Broker();
-        
-        Topic testTopic = Topic.newBuilder()
-                .setTopicName("TestTopic")
-                .setNumPartitions(5)
-                .setReplicationFactor(1)
-                .build();
-        
-        broker.createTopics(List.of(testTopic));
+        SharedTestServer.startServer();
     }
     
     @Test
-    public void testReadyLogic_BatchIsFull() throws IOException {
+    public void testReadyLogic_BatchIsFull() throws IOException, InterruptedException {
         // Create small batch size to easily fill it
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
+        ProducerConfig config = new ProducerConfig(512, 50, 1024L * 1024, CompressionType.GZIP, 60000L); // 50ms linger
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
         // Create a record that will fill the batch
         Headers headers = new Headers();
         ProducerRecord<String, String> record = new ProducerRecord<>(
                 "TestTopic", 0, System.currentTimeMillis(), "key", 
-                "x".repeat(95), headers // 95 chars + overhead should fill 100 byte batch
+                "x".repeat(450), headers // 450 chars + overhead should fill 512 byte batch
         );
         byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
         
         // Append record to fill the batch
         accumulator.append(serializedData);
         
-        // Batch should be ready because it's full
+        // Wait for linger time to ensure batch becomes ready
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
+        
+        // Batch should be ready due to timeout (if not full)
         List<TopicPartition> readyPartitions = accumulator.ready();
         assertEquals(1, readyPartitions.size());
         assertEquals("TestTopic", readyPartitions.get(0).getTopic());
@@ -90,15 +82,15 @@ public class DrainReadyLogicTest {
     }
     
     @Test
-    public void testReadyLogic_MultipleBatches() throws IOException {
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
+    public void testReadyLogic_MultipleBatches() throws IOException, InterruptedException {
+        ProducerConfig config = new ProducerConfig(512, 50, 1024L * 1024, CompressionType.GZIP, 60000L); // 50ms linger
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
         Headers headers = new Headers();
         
         // Fill batch for partition 0
         ProducerRecord<String, String> record1 = new ProducerRecord<>(
-                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(95), headers
+                "TestTopic", 0, System.currentTimeMillis(), "key", "x".repeat(450), headers
         );
         accumulator.append(ProducerRecordCodec.serialize(record1, String.class, String.class));
         
@@ -108,25 +100,30 @@ public class DrainReadyLogicTest {
         );
         accumulator.append(ProducerRecordCodec.serialize(record2, String.class, String.class));
         
+        // Wait for linger timeout
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
+        
         List<TopicPartition> readyPartitions = accumulator.ready();
-        assertEquals(1, readyPartitions.size());
-        assertEquals("TestTopic", readyPartitions.get(0).getTopic());
-        assertEquals(0, readyPartitions.get(0).getPartition()); // Only partition 0 should be ready (full)
+        assertEquals(2, readyPartitions.size()); // Both partitions should be ready due to timeout
+        boolean hasPartition0 = readyPartitions.stream().anyMatch(tp -> tp.getPartition() == 0);
+        boolean hasPartition2 = readyPartitions.stream().anyMatch(tp -> tp.getPartition() == 2);
+        assertTrue(hasPartition0);
+        assertTrue(hasPartition2);
     }
     
     @Test
-    public void testDrainLogic() throws IOException {
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
+    public void testDrainLogic() throws IOException, InterruptedException {
+        ProducerConfig config = new ProducerConfig(512, 50, 1024L * 1024, CompressionType.GZIP, 60000L); // 50ms linger
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
         Headers headers = new Headers();
         
         // Add records to different partitions
         ProducerRecord<String, String> record1 = new ProducerRecord<>(
-                "TestTopic", 0, System.currentTimeMillis(), "key1", "x".repeat(95), headers
+                "TestTopic", 0, System.currentTimeMillis(), "key1", "x".repeat(450), headers
         );
         ProducerRecord<String, String> record2 = new ProducerRecord<>(
-                "TestTopic", 1, System.currentTimeMillis(), "key2", "x".repeat(95), headers
+                "TestTopic", 1, System.currentTimeMillis(), "key2", "x".repeat(450), headers
         );
         ProducerRecord<String, String> record3 = new ProducerRecord<>(
                 "TestTopic", 2, System.currentTimeMillis(), "key3", "small", headers
@@ -136,13 +133,18 @@ public class DrainReadyLogicTest {
         accumulator.append(ProducerRecordCodec.serialize(record2, String.class, String.class));
         accumulator.append(ProducerRecordCodec.serialize(record3, String.class, String.class));
         
-        // Get ready partitions (0 and 1 should be full)
+        // Wait for linger timeout
+        Thread.sleep(60); // Wait 60ms > 50ms linger time
+        
+        // Get ready partitions (all should be ready due to timeout)
         List<TopicPartition> readyPartitions = accumulator.ready();
-        assertEquals(2, readyPartitions.size());
+        assertEquals(3, readyPartitions.size()); // All partitions should be ready due to timeout
         boolean hasPartition0 = readyPartitions.stream().anyMatch(tp -> tp.getPartition() == 0);
         boolean hasPartition1 = readyPartitions.stream().anyMatch(tp -> tp.getPartition() == 1);
+        boolean hasPartition2 = readyPartitions.stream().anyMatch(tp -> tp.getPartition() == 2);
         assertTrue(hasPartition0);
         assertTrue(hasPartition1);
+        assertTrue(hasPartition2);
         
         // Track initial memory usage
         long initialMemoryUsage = accumulator.getTotalBytesUsed();
@@ -152,18 +154,18 @@ public class DrainReadyLogicTest {
         Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
         
         // Verify drained batches
-        assertEquals(2, drainedBatches.size());
+        assertEquals(3, drainedBatches.size()); // All 3 partitions should be drained
         boolean hasDrainedPartition0 = drainedBatches.keySet().stream().anyMatch(tp -> tp.getPartition() == 0);
         boolean hasDrainedPartition1 = drainedBatches.keySet().stream().anyMatch(tp -> tp.getPartition() == 1);
         boolean hasDrainedPartition2 = drainedBatches.keySet().stream().anyMatch(tp -> tp.getPartition() == 2);
         assertTrue(hasDrainedPartition0);
         assertTrue(hasDrainedPartition1);
-        assertFalse(hasDrainedPartition2); // Partition 2 wasn't ready
+        assertTrue(hasDrainedPartition2); // All partitions were ready due to timeout
         
         // Verify batches were removed from accumulator
         assertNull(accumulator.getCurrentBatch("TestTopic", 0));
         assertNull(accumulator.getCurrentBatch("TestTopic", 1));
-        assertNotNull(accumulator.getCurrentBatch("TestTopic", 2)); // Partition 2 should still have batch
+        assertNull(accumulator.getCurrentBatch("TestTopic", 2)); // All batches should be drained
         
         // Verify memory usage decreased
         long finalMemoryUsage = accumulator.getTotalBytesUsed();

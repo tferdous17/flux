@@ -38,7 +38,6 @@ public class RecordAccumulator {
         this.partitionBatches = new ConcurrentHashMap<>();
         this.inFlightBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
-        validateBatchSize(config.getBatchSize());
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) throws InterruptedException {
@@ -343,16 +342,6 @@ public class RecordAccumulator {
         });
     }
 
-    private void validateBatchSize(int batchSize) {
-        final int MIN_BATCH_SIZE = 1; // Minimum size
-        final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
-
-        if (batchSize < MIN_BATCH_SIZE || batchSize > MAX_BATCH_SIZE) {
-            throw new IllegalArgumentException(
-                    "Batch size must be between " + MIN_BATCH_SIZE + "-" + MAX_BATCH_SIZE + " bytes."
-            );
-        }
-    }
     
     public ProducerConfig getConfig() {
         return config;

@@ -49,6 +49,8 @@ public class ProducerConfig {
         this.batchSize = Integer.parseInt(
             props.getProperty("batch.size", String.valueOf(DEFAULT_BATCH_SIZE))
         );
+        validateBatchSize(this.batchSize);
+        
         this.lingerMs = Integer.parseInt(
             props.getProperty("linger.ms", String.valueOf(DEFAULT_LINGER_MS))
         );
@@ -82,6 +84,7 @@ public class ProducerConfig {
      * Create ProducerConfig with all values including BufferPool settings
      */
     public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, boolean compressionEnabled, long maxBlockMs) {
+        validateBatchSize(batchSize);
         this.batchSize = batchSize;
         this.lingerMs = lingerMs;
         this.compressionType = compressionEnabled ? CompressionType.GZIP : CompressionType.NONE;
@@ -93,6 +96,7 @@ public class ProducerConfig {
     }
     
     public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, CompressionType compressionType, long maxBlockMs) {
+        validateBatchSize(batchSize);
         this.batchSize = batchSize;
         this.lingerMs = lingerMs;
         this.compressionType = compressionType != null ? compressionType : DEFAULT_COMPRESSION_TYPE;
@@ -133,5 +137,16 @@ public class ProducerConfig {
     
     public int getMaxInFlightRequests() {
         return maxInFlightRequests;
+    }
+    
+    private void validateBatchSize(int batchSize) {
+        final int MIN_BATCH_SIZE = 1; // Minimum size
+        final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
+
+        if (batchSize < MIN_BATCH_SIZE || batchSize > MAX_BATCH_SIZE) {
+            throw new IllegalArgumentException(
+                    "Batch size must be between " + MIN_BATCH_SIZE + "-" + MAX_BATCH_SIZE + " bytes."
+            );
+        }
     }
 }
