@@ -49,17 +49,4 @@ public class CompressionUtil {
         return baos.toByteArray();
     }
     
-    /**
-     * Check if compression is beneficial (reduces size)
-     * @param originalData the original data
-     * @param compressedData the compressed data
-     * @return true if compression reduces size by at least 5%
-     */
-    public static boolean isCompressionBeneficial(byte[] originalData, byte[] compressedData) {
-        if (originalData == null || compressedData == null) {
-            return false;
-        }
-        // Only compress if it reduces size by at least 5%
-        return compressedData.length < (originalData.length * 0.95);
-    }
 }

@@ -1,5 +1,6 @@
 package producer;
 
+import commons.CompressionType;
 import java.util.Properties;
 
 /**
@@ -9,14 +10,16 @@ import java.util.Properties;
 public class ProducerConfig {
     private final int batchSize;
     private final int lingerMs;
-    private final int maxBufferSize;
-    private final boolean compressionEnabled;
+    private final CompressionType compressionType;
+    private final long bufferMemory;
+    private final long maxBlockMs;
     
-    // Default values
+    // Default values 
     private static final int DEFAULT_BATCH_SIZE = 16384; // 16KB
     private static final int DEFAULT_LINGER_MS = 100; // 100ms
-    private static final int DEFAULT_MAX_BUFFER_SIZE = 33554432; // 32MB
-    private static final boolean DEFAULT_COMPRESSION_ENABLED = true;
+    private static final CompressionType DEFAULT_COMPRESSION_TYPE = CompressionType.NONE;
+    private static final long DEFAULT_BUFFER_MEMORY = 33554432L; // 32MB
+    private static final long DEFAULT_MAX_BLOCK_MS = 60000L; // 60 seconds
     
     /**
      * Create ProducerConfig with default values
@@ -24,8 +27,9 @@ public class ProducerConfig {
     public ProducerConfig() {
         this.batchSize = DEFAULT_BATCH_SIZE;
         this.lingerMs = DEFAULT_LINGER_MS;
-        this.maxBufferSize = DEFAULT_MAX_BUFFER_SIZE;
-        this.compressionEnabled = DEFAULT_COMPRESSION_ENABLED;
+        this.compressionType = DEFAULT_COMPRESSION_TYPE;
+        this.bufferMemory = DEFAULT_BUFFER_MEMORY;
+        this.maxBlockMs = DEFAULT_MAX_BLOCK_MS;
     }
     
     /**
@@ -39,22 +43,40 @@ public class ProducerConfig {
         this.lingerMs = Integer.parseInt(
             props.getProperty("linger.ms", String.valueOf(DEFAULT_LINGER_MS))
         );
-        this.maxBufferSize = Integer.parseInt(
-            props.getProperty("max.buffer.size", String.valueOf(DEFAULT_MAX_BUFFER_SIZE))
+        String compressionName = props.getProperty("compression.type", DEFAULT_COMPRESSION_TYPE.getName());
+        CompressionType tempCompressionType;
+        try {
+            tempCompressionType = CompressionType.fromName(compressionName);
+        } catch (IllegalArgumentException e) {
+            tempCompressionType = DEFAULT_COMPRESSION_TYPE;
+        }
+        this.compressionType = tempCompressionType;
+        this.bufferMemory = Long.parseLong(
+            props.getProperty("buffer.memory", String.valueOf(DEFAULT_BUFFER_MEMORY))
         );
-        this.compressionEnabled = Boolean.parseBoolean(
-            props.getProperty("compression.enabled", String.valueOf(DEFAULT_COMPRESSION_ENABLED))
+        this.maxBlockMs = Long.parseLong(
+            props.getProperty("max.block.ms", String.valueOf(DEFAULT_MAX_BLOCK_MS))
         );
     }
     
+    
     /**
-     * Create ProducerConfig with custom values
+     * Create ProducerConfig with all values including BufferPool settings
      */
-    public ProducerConfig(int batchSize, int lingerMs, int maxBufferSize, boolean compressionEnabled) {
+    public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, boolean compressionEnabled, long maxBlockMs) {
         this.batchSize = batchSize;
         this.lingerMs = lingerMs;
-        this.maxBufferSize = maxBufferSize;
-        this.compressionEnabled = compressionEnabled;
+        this.compressionType = compressionEnabled ? CompressionType.GZIP : CompressionType.NONE;
+        this.bufferMemory = bufferMemory;
+        this.maxBlockMs = maxBlockMs;
+    }
+    
+    public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, CompressionType compressionType, long maxBlockMs) {
+        this.batchSize = batchSize;
+        this.lingerMs = lingerMs;
+        this.compressionType = compressionType != null ? compressionType : DEFAULT_COMPRESSION_TYPE;
+        this.bufferMemory = bufferMemory;
+        this.maxBlockMs = maxBlockMs;
     }
     
     public int getBatchSize() {
@@ -65,11 +87,15 @@ public class ProducerConfig {
         return lingerMs;
     }
     
-    public int getMaxBufferSize() {
-        return maxBufferSize;
+    public CompressionType getCompressionType() {
+        return compressionType;
     }
     
-    public boolean isCompressionEnabled() {
-        return compressionEnabled;
+    public long getBufferMemory() {
+        return bufferMemory;
+    }
+    
+    public long getMaxBlockMs() {
+        return maxBlockMs;
     }
 }

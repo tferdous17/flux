@@ -1,5 +1,6 @@
 package producer;
 
+import commons.CompressionType;
 import commons.utils.PartitionSelector;
 import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
@@ -14,7 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class RecordAccumulator {
     private final ProducerConfig config;
-    private volatile long totalBytesUsed; // Track memory usage across all batches
+    private final BufferPool free; // BufferPool for memory management
     private Map<TopicPartition, Deque<RecordBatch>> partitionBatches; // Per topic-partition batch queues
     private final int numPartitions;
 
@@ -22,25 +23,21 @@ public class RecordAccumulator {
         this(new ProducerConfig(), numPartitions);
     }
 
-    public RecordAccumulator(int batchSize, int numPartitions) {
-        this(new ProducerConfig(batchSize, 100, 33554432, true), numPartitions);
-    }
-
-    public RecordAccumulator(int batchSize, int maxBufferSize, int numPartitions) {
-        this(new ProducerConfig(batchSize, 100, maxBufferSize, true), numPartitions);
-    }
     
     public RecordAccumulator(ProducerConfig config, int numPartitions) {
         this.config = config;
-        this.totalBytesUsed = 0;
+        this.free = new BufferPool(config.getBufferMemory(), config.getBatchSize());
         this.partitionBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
         validateBatchSize(config.getBatchSize());
     }
 
-    public RecordBatch createBatch(int partition, long baseOffset) {
+    public RecordBatch createBatch(int partition, long baseOffset) throws InterruptedException {
         Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
-        return new RecordBatch(config.getBatchSize());
+        
+        // Allocate buffer from BufferPool
+        java.nio.ByteBuffer buffer = free.allocate(config.getBatchSize(), config.getMaxBlockMs());
+        return new RecordBatch(buffer, config.getCompressionType());
     }
 
     public boolean flush() {
@@ -80,13 +77,6 @@ public class RecordAccumulator {
     4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
     */
     public void append(byte[] serializedRecord) throws IOException {
-        // Check memory limits before proceeding
-        if (totalBytesUsed + serializedRecord.length > config.getMaxBufferSize()) {
-            throw new IllegalStateException(
-                "Cannot append record: would exceed maximum buffer size of " + config.getMaxBufferSize() + " bytes. " +
-                "Current usage: " + totalBytesUsed + " bytes, Record size: " + serializedRecord.length + " bytes."
-            );
-        }
 
         // Extract topic and partition from the serialized record
         TopicPartition topicPartition = extractTopicPartitionFromRecord(serializedRecord);
@@ -102,8 +92,7 @@ public class RecordAccumulator {
             RecordBatch lastBatch = deque.peekLast();
             if (lastBatch != null && lastBatch.append(serializedRecord)) {
                 // Successfully appended to existing batch
-                totalBytesUsed += serializedRecord.length;
-                Logger.info("Record appended to existing batch for {}. Total bytes used: {}", topicPartition, totalBytesUsed);
+                Logger.info("Record appended to existing batch for {}.", topicPartition);
                 return;
             }
             
@@ -113,12 +102,19 @@ public class RecordAccumulator {
             deque.addLast(newBatch);
             
             if (!newBatch.append(serializedRecord)) {
+                // If record doesn't fit, we need to deallocate the buffer and throw exception
+                free.deallocate(newBatch.getBuffer(), newBatch.getInitialCapacity());
+                deque.removeLast(); // Remove the batch we just added
                 throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
             }
             
-            // Update total bytes used
-            totalBytesUsed += serializedRecord.length;
-            Logger.info("Record appended to new batch for {}. Total bytes used: {}", topicPartition, totalBytesUsed);
+            Logger.info("Record appended to new batch for {}.", topicPartition);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while waiting for buffer memory", e);
+        } catch (IllegalStateException e) {
+            Logger.error("Buffer allocation failed: " + e.getMessage());
+            throw new IOException("Cannot allocate buffer memory: " + e.getMessage(), e);
         } catch (Exception e) {
             Logger.error("Failed to append record: " + e.getMessage(), e);
             throw e;
@@ -133,19 +129,6 @@ public class RecordAccumulator {
         return deque != null ? deque.peekLast() : null;
     }
 
-    /**
-     * Get the current batch for partition 0 (backward compatibility)
-     */
-    public RecordBatch getCurrentBatch() {
-        // Find last batch in deque for partition 0
-        for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : partitionBatches.entrySet()) {
-            if (entry.getKey().getPartition() == 0) {
-                Deque<RecordBatch> deque = entry.getValue();
-                return deque != null ? deque.peekLast() : null;
-            }
-        }
-        return null;
-    }
 
     /**
      * Get all partition batches (current/last batch for each partition)
@@ -165,13 +148,14 @@ public class RecordAccumulator {
         return config.getBatchSize();
     }
 
-    public long getTotalBytesUsed() {
-        return totalBytesUsed;
+    public long getBufferMemory() {
+        return config.getBufferMemory();
     }
 
-    public int getMaxBufferSize() {
-        return config.getMaxBufferSize();
+    public long getTotalBytesUsed() {
+        return free.totalMemory() - free.availableMemory();
     }
+
 
     /**
      * Get list of topic-partitions with ready batches
@@ -221,13 +205,13 @@ public class RecordAccumulator {
                 // Remove the first (oldest) batch from the deque
                 RecordBatch batch = deque.pollFirst();
                 if (batch != null) {
-                    // Compress if enabled
-                    if (config.isCompressionEnabled() && batch.getCurrBatchSizeInBytes() > 0) {
+                    // Compress the batch (will only compress if type != NONE)
+                    if (batch.getCurrBatchSizeInBytes() > 0) {
                         batch.compress();
                     }
                     
-                    // Update memory tracking
-                    decreaseMemoryUsage(batch);
+                    // Deallocate buffer back to pool
+                    free.deallocate(batch.getBuffer(), batch.getInitialCapacity());
                     
                     drainedBatches.put(topicPartition, batch);
                     Logger.info("Drained batch from {} - size: {} bytes, compressed: {}, remaining batches: {}",
@@ -239,16 +223,12 @@ public class RecordAccumulator {
         return drainedBatches;
     }
     
-    /**
-     * Helper method to decrease memory tracking when a batch is removed
-     */
-    private void decreaseMemoryUsage(RecordBatch batch) {
-        totalBytesUsed -= batch.getCurrBatchSizeInBytes();
-    }
 
     public void printRecord() {
         Logger.info("Batch Size: " + getBatchSize());
-        Logger.info("Total Memory Used: " + totalBytesUsed + " / " + config.getMaxBufferSize() + " bytes");
+        Logger.info("Total Memory Used: " + getTotalBytesUsed() + " / " + free.totalMemory() + " bytes");
+        Logger.info("Available Memory: " + free.availableMemory() + " bytes");
+        Logger.info("Queued Threads: " + free.queued());
         Logger.info("Topic-Partition Batches:");
         
         partitionBatches.forEach((topicPartition, deque) -> {
@@ -275,5 +255,13 @@ public class RecordAccumulator {
     
     public ProducerConfig getConfig() {
         return config;
+    }
+    
+    /**
+     * Get BufferPool for testing and monitoring
+     * @return BufferPool instance
+     */
+    public BufferPool getBufferPool() {
+        return free;
     }
 }

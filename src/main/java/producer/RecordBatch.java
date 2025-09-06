@@ -1,6 +1,6 @@
 package producer;
 
-import commons.utils.CompressionUtil;
+import commons.CompressionType;
 import org.tinylog.Logger;
 
 import java.io.IOException;
@@ -12,23 +12,49 @@ public class RecordBatch {
     private int numRecords;
     private ByteBuffer batch;
     private final long creationTime;
-    private boolean isCompressed;
+    private CompressionType compressionType;
     private byte[] compressedData;
+    private final int initialCapacity; // Track initial capacity for BufferPool deallocation
 
     private static final int DEFAULT_BATCH_SIZE = 10_240; // default batch size: 10 KB = 10,240 bytes
 
     public RecordBatch() {
-        this(DEFAULT_BATCH_SIZE);
+        this(DEFAULT_BATCH_SIZE, CompressionType.NONE);
     }
 
     public RecordBatch(int maxBatchSizeInBytes) {
+        this(maxBatchSizeInBytes, CompressionType.NONE);
+    }
+
+    public RecordBatch(int maxBatchSizeInBytes, CompressionType compressionType) {
         this.maxBatchSizeInBytes = maxBatchSizeInBytes;
         this.currBatchSizeInBytes = 0;
         this.numRecords = 0;
         this.batch = ByteBuffer.allocate(maxBatchSizeInBytes);
         this.creationTime = System.currentTimeMillis();
-        this.isCompressed = false;
+        this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
         this.compressedData = null;
+        this.initialCapacity = maxBatchSizeInBytes;
+    }
+
+    /**
+     * Create a RecordBatch with a pre-allocated buffer from BufferPool
+     * 
+     * @param buffer Pre-allocated ByteBuffer from BufferPool
+     */
+    public RecordBatch(ByteBuffer buffer) {
+        this(buffer, CompressionType.NONE);
+    }
+
+    public RecordBatch(ByteBuffer buffer, CompressionType compressionType) {
+        this.maxBatchSizeInBytes = buffer.capacity();
+        this.currBatchSizeInBytes = 0;
+        this.numRecords = 0;
+        this.batch = buffer;
+        this.creationTime = System.currentTimeMillis();
+        this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
+        this.compressedData = null;
+        this.initialCapacity = buffer.capacity();
     }
 
     // NOTE: This method may need refactoring once SerializedRecord (Producer) is implemented, but logic remains same
@@ -76,17 +102,21 @@ public class RecordBatch {
     }
 
     public boolean isCompressed() {
-        return isCompressed;
+        return compressedData != null;
+    }
+
+    public CompressionType getCompressionType() {
+        return compressionType;
     }
 
     /**
-     * Compress the batch data using GZIP compression.
-     * Only compresses if it reduces the size by at least 5%.
+     * Compress the batch data using the configured compression type.
+     * 
      * @return true if compression was applied, false otherwise
      */
     public boolean compress() throws IOException {
-        if (isCompressed || currBatchSizeInBytes == 0) {
-            return isCompressed;
+        if (compressedData != null || currBatchSizeInBytes == 0 || compressionType == CompressionType.NONE) {
+            return compressedData != null;
         }
 
         // Get the current data from the buffer
@@ -94,31 +124,25 @@ public class RecordBatch {
         batch.rewind();
         batch.get(originalData, 0, currBatchSizeInBytes);
 
-        // Compress the data
-        byte[] compressed = CompressionUtil.gzipCompress(originalData);
+        // Compress the data using the configured compression type
+        byte[] compressed = compressionType.compress(originalData);
+        this.compressedData = compressed;
 
-        // Only use compression if it's beneficial
-        if (CompressionUtil.isCompressionBeneficial(originalData, compressed)) {
-            this.compressedData = compressed;
-            this.isCompressed = true;
-            Logger.info("Batch compressed from {} bytes to {} bytes", 
-                       originalData.length, compressed.length);
-            return true;
-        }
-
-        Logger.info("Compression not beneficial for batch - keeping original data");
-        return false;
+        Logger.info("Batch compressed using {} from {} bytes to {} bytes",
+                compressionType.getName(), originalData.length, compressed.length);
+        return true;
     }
 
     /**
      * Get the batch data - either compressed or original
+     * 
      * @return compressed data if compressed, otherwise original buffer data
      */
     public byte[] getData() throws IOException {
-        if (isCompressed) {
+        if (compressedData != null) {
             return compressedData;
         }
-        
+
         byte[] data = new byte[currBatchSizeInBytes];
         batch.rewind();
         batch.get(data, 0, currBatchSizeInBytes);
@@ -127,21 +151,40 @@ public class RecordBatch {
 
     /**
      * Get the size of the batch data (compressed if compression was applied)
+     * 
      * @return size in bytes
      */
     public int getDataSize() {
-        return isCompressed ? compressedData.length : currBatchSizeInBytes;
+        return compressedData != null ? compressedData.length : currBatchSizeInBytes;
     }
 
     public void printBatchDetails() {
         System.out.println("Number of Records: " + getRecordCount());
         System.out.println("Current Size: " + currBatchSizeInBytes + " bytes");
-        if (isCompressed) {
+        if (compressedData != null) {
             System.out.println("Compressed Size: " + compressedData.length + " bytes");
             double compressionRatio = (double) compressedData.length / currBatchSizeInBytes;
             System.out.println("Compression Ratio: " + String.format("%.2f%%", compressionRatio * 100));
         }
         System.out.println("Max Batch Size: " + maxBatchSizeInBytes + " bytes");
-        System.out.println("Compressed: " + isCompressed + "\n");
+        System.out.println("Compression Type: " + compressionType.getName() + "\n");
+    }
+
+    /**
+     * Get the initial capacity for BufferPool deallocation
+     * 
+     * @return initial capacity in bytes
+     */
+    public int getInitialCapacity() {
+        return initialCapacity;
+    }
+
+    /**
+     * Get the underlying buffer for BufferPool deallocation
+     * 
+     * @return ByteBuffer instance
+     */
+    public ByteBuffer getBuffer() {
+        return batch;
     }
 }

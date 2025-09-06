@@ -1,5 +1,6 @@
 package producer;
 
+import commons.CompressionType;
 import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.BeforeAll;
@@ -58,14 +59,15 @@ public class RecordAccumulatorTest {
         byte[] serializedData = ProducerRecordCodec.serialize(record, String.class, String.class);
 
         // Execute
-        RecordAccumulator recordAccumulator = new RecordAccumulator(3);
+        RecordAccumulator recordAccumulator = new RecordAccumulator(new ProducerConfig(), 3);
         recordAccumulator.append(serializedData);
         recordAccumulator.printRecord();
     }
 
     @Test
     public void testMemoryTracking() throws IOException {
-        RecordAccumulator accumulator = new RecordAccumulator(10240, 1000, 3); // Small buffer size for testing
+        ProducerConfig config = new ProducerConfig(10240, 100, 1000L, CompressionType.NONE, 60000L);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 3); // Small buffer size for testing
         assertEquals(0, accumulator.getTotalBytesUsed());
 
         // Create test record
@@ -91,7 +93,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testConcurrentHashMapUsage() throws IOException {
-        RecordAccumulator accumulator = new RecordAccumulator(3);
+        RecordAccumulator accumulator = new RecordAccumulator(new ProducerConfig(), 3);
         
         // Create records for different partitions
         Headers headers = new Headers();
@@ -112,27 +114,29 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testGetters() {
-        RecordAccumulator accumulator = new RecordAccumulator(10240, 32 * 1024 * 1024, 5);
+        ProducerConfig config = new ProducerConfig(10240, 100, 32L * 1024 * 1024, CompressionType.NONE, 60000L);
+        RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         assertEquals(10240, accumulator.getBatchSize());
-        assertEquals(32 * 1024 * 1024, accumulator.getMaxBufferSize());
+        assertEquals(32L * 1024 * 1024, accumulator.getBufferMemory());
         assertEquals(0, accumulator.getTotalBytesUsed());
     }
 
     @Test
     public void testDefaultConstructors() {
-        RecordAccumulator accumulator1 = new RecordAccumulator(3);
+        RecordAccumulator accumulator1 = new RecordAccumulator(new ProducerConfig(), 3);
         assertEquals(16384, accumulator1.getBatchSize());
-        assertEquals(32 * 1024 * 1024, accumulator1.getMaxBufferSize());
+        assertEquals(33554432L, accumulator1.getBufferMemory());
 
-        RecordAccumulator accumulator2 = new RecordAccumulator(16384, 3);
+        ProducerConfig config2 = new ProducerConfig(16384, 100, 33554432L, CompressionType.NONE, 60000L);
+        RecordAccumulator accumulator2 = new RecordAccumulator(config2, 3);
         assertEquals(16384, accumulator2.getBatchSize());
-        assertEquals(32 * 1024 * 1024, accumulator2.getMaxBufferSize());
+        assertEquals(33554432L, accumulator2.getBufferMemory());
     }
 
     @Test
     public void testReadyLogic_BatchIsFull() throws IOException {
         // Create small batch size to easily fill it
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024 * 1024, true);
+        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
         // Create a record that will fill the batch
@@ -156,7 +160,7 @@ public class RecordAccumulatorTest {
     @Test 
     public void testReadyLogic_BatchTimedOut() throws IOException, InterruptedException {
         // Create config with very short linger time
-        ProducerConfig config = new ProducerConfig(10240, 50, 1024 * 1024, true); // 50ms linger
+        ProducerConfig config = new ProducerConfig(10240, 50, 1024L * 1024, CompressionType.GZIP, 60000L); // 50ms linger
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
         // Add small record that won't fill batch
@@ -184,7 +188,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testReadyLogic_MultipleBatches() throws IOException {
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024 * 1024, true);
+        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
         Headers headers = new Headers();
@@ -209,7 +213,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testDrainLogic() throws IOException {
-        ProducerConfig config = new ProducerConfig(100, 5000, 1024 * 1024, true);
+        ProducerConfig config = new ProducerConfig(100, 5000, 1024L * 1024, CompressionType.GZIP, 60000L);
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
         Headers headers = new Headers();
@@ -265,7 +269,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testDrainWithCompression() throws IOException {
-        ProducerConfig config = new ProducerConfig(1000, 5000, 1024 * 1024, true); // Compression enabled
+        ProducerConfig config = new ProducerConfig(1000, 5000, 1024L * 1024, CompressionType.GZIP, 60000L); // GZIP compression
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
         Headers headers = new Headers();
@@ -295,7 +299,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testDrainWithCompressionDisabled() throws IOException {
-        ProducerConfig config = new ProducerConfig(1000, 5000, 1024 * 1024, false); // Compression disabled
+        ProducerConfig config = new ProducerConfig(1000, 5000, 1024L * 1024, CompressionType.NONE, 60000L); // No compression
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
         Headers headers = new Headers();
@@ -317,7 +321,7 @@ public class RecordAccumulatorTest {
 
     @Test
     public void testDrainEmptyList() throws IOException {
-        RecordAccumulator accumulator = new RecordAccumulator(3);
+        RecordAccumulator accumulator = new RecordAccumulator(new ProducerConfig(), 3);
         
         // Drain with empty list should return empty map
         Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(List.of());
