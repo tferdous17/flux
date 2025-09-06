@@ -36,7 +36,7 @@ public class CallbackTest {
         FluxTopic testTopic = new FluxTopic("test-topic", partitions, 1);
         repo.addNewTopic("test-topic", testTopic);
         
-        accumulator = new RecordAccumulator(1024, 3, 100);
+        accumulator = new RecordAccumulator(1024, 3, 100, 30000, 0.9, 32 * 1024 * 1024L, commons.compression.CompressionType.NONE);
     }
 
     @AfterEach

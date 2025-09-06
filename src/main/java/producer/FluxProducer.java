@@ -17,7 +17,9 @@ import metadata.snapshots.ClusterSnapshot;
 import org.tinylog.Logger;
 import proto.*;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -244,22 +246,55 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             recordAccumulator.markBatchSending(batchId);
         }
 
-        PublishDataToBrokerRequest request = PublishDataToBrokerRequest
+        PublishDataToBrokerRequest.Builder requestBuilder = PublishDataToBrokerRequest
                 .newBuilder()
-                .addAllRecords(
-                        recordsToSend
-                        .stream()
-                        .map(r -> proto.Record
-                                .newBuilder()
-                                .setTargetPartition(r.targetPartition())
-                                .setData(ByteString.copyFrom(r.data()))
-                                .setTopic(r.topicName())
-                                .build()
-                        )
-                        .toList()
+                .setCompressionType(proto.CompressionType.forNumber(compressionType.getId()));
+
+        // Create records list for compression
+        List<proto.Record> protoRecords = recordsToSend
+                .stream()
+                .map(r -> proto.Record
+                        .newBuilder()
+                        .setTargetPartition(r.targetPartition())
+                        .setData(ByteString.copyFrom(r.data()))
+                        .setTopic(r.topicName())
+                        .build()
                 )
-                .setCompressionType(proto.CompressionType.forNumber(compressionType.getId()))
-                .build();
+                .toList();
+
+        // Handle compression if enabled
+        if (compressionType != CompressionType.NONE) {
+            try {
+                // Serialize the records to bytes for compression
+                ByteArrayOutputStream recordsStream = new ByteArrayOutputStream();
+                for (proto.Record record : protoRecords) {
+                    record.writeDelimitedTo(recordsStream);
+                }
+                byte[] recordsBytes = recordsStream.toByteArray();
+                
+                // Compress the serialized data
+                ByteBuffer compressedData = commons.compression.CompressionUtils.compress(
+                    ByteBuffer.wrap(recordsBytes), compressionType);
+                
+                // Use compressed data
+                requestBuilder
+                    .setCompressedData(ByteString.copyFrom(compressedData))
+                    .setIsCompressed(true);
+                    
+                Logger.info("Compressed {} bytes to {} bytes (ratio: {:.2f})", 
+                           recordsBytes.length, compressedData.remaining(),
+                           (double) compressedData.remaining() / recordsBytes.length);
+            } catch (Exception e) {
+                Logger.warn("Compression failed, sending uncompressed: {}", e.getMessage());
+                // Fallback to uncompressed
+                requestBuilder.addAllRecords(protoRecords).setIsCompressed(false);
+            }
+        } else {
+            // Send uncompressed
+            requestBuilder.addAllRecords(protoRecords).setIsCompressed(false);
+        }
+
+        PublishDataToBrokerRequest request = requestBuilder.build();
 
         Logger.info("Sending {} records in {} batches (size: {} bytes)", 
                    recordsToSend.size(), batchesToSend.size(), request.getSerializedSize());

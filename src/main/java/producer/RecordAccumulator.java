@@ -41,50 +41,8 @@ public class RecordAccumulator {
     private final AtomicLong batchesFailed = new AtomicLong(0);
     private final AtomicLong recordsAppended = new AtomicLong(0);
 
-    /**
-     * Create a RecordAccumulator with default configuration.
-     * Uses: 10KB batches, 100ms linger, 30s timeout, 90% threshold, 32MB memory
-     * 
-     * @param numPartitions Number of partitions to manage batches for
-     */
     public RecordAccumulator(int numPartitions) {
         this(DEFAULT_BATCH_SIZE, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
-    }
-
-    /**
-     * Create a RecordAccumulator with custom batch size, other defaults.
-     * Uses: custom batch size, 100ms linger, 30s timeout, 90% threshold, 32MB memory
-     * 
-     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
-     * @param numPartitions Number of partitions to manage batches for
-     */
-    public RecordAccumulator(int batchSize, int numPartitions) {
-        this(batchSize, numPartitions, DEFAULT_LINGER_MS, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
-    }
-
-    /**
-     * Create a RecordAccumulator with custom batch size and linger time.
-     * Uses: custom batch size/linger, 30s timeout, 90% threshold, 32MB memory
-     * 
-     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
-     * @param numPartitions Number of partitions to manage batches for
-     * @param lingerMs Maximum time in milliseconds to wait before sending (0-60000ms)
-     */
-    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs) {
-        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, DEFAULT_BUFFER_MEMORY, CompressionType.NONE);
-    }
-    
-    /**
-     * Create a RecordAccumulator with custom batch size, linger time, and buffer memory.
-     * Uses: custom batch size/linger/memory, 30s timeout, 90% threshold
-     * 
-     * @param batchSize Maximum size in bytes for each batch (1 byte - 1MB)
-     * @param numPartitions Number of partitions to manage batches for
-     * @param lingerMs Maximum time in milliseconds to wait before sending (0-60000ms)
-     * @param bufferMemory Total memory in bytes available for buffering (>= batchSize, max 1GB)
-     */
-    public RecordAccumulator(int batchSize, int numPartitions, long lingerMs, long bufferMemory) {
-        this(batchSize, numPartitions, lingerMs, DEFAULT_BATCH_TIMEOUT_MS, DEFAULT_BATCH_SIZE_THRESHOLD, bufferMemory, CompressionType.NONE);
     }
     
     /**
@@ -120,12 +78,9 @@ public class RecordAccumulator {
         this.bufferPool = new BufferPool(bufferMemory, batchSize, maxBlockTimeMs);
         
         
-        Logger.info("RecordAccumulator initialized - BatchSize: {}KB, LingerMs: {}ms, BatchTimeout: {}ms, SizeThreshold: {}, Memory: {}MB, Compression: {}", 
-                   batchSize / 1024, lingerMs, batchTimeoutMs, batchSizeThreshold, bufferMemory / (1024 * 1024), compressionType);
     }
 
     public RecordBatch createBatch(int partition, long baseOffset) {
-        Logger.info("Creating new batch for partition " + partition + " with baseOffset " + baseOffset);
         
         // Create batch with buffer pool support and compression
         RecordBatch batch = new RecordBatch(batchSize, bufferPool, compressionType);
@@ -167,24 +122,10 @@ public class RecordAccumulator {
             inflightBatches.put(batch.getBatchId(), batch);
         }
         
-        if (!drainedBatches.isEmpty()) {
-            Logger.info("Drained {} ready batches for sending", drainedBatches.size());
-        }
         
         return drainedBatches;
     }
     
-    /**
-     * Get batches that are ready for sending based on size or time.
-     * This method is kept for backward compatibility but delegates to drain().
-     * 
-     * @deprecated Use drain() instead for better Kafka compatibility
-     * @return Map of partition to RecordBatch for ready batches
-     */
-    @Deprecated
-    public Map<Integer, RecordBatch> getReadyBatches() {
-        return drain();
-    }
 
     /**
      * Flush all current batches and return them for sending.
@@ -200,11 +141,8 @@ public class RecordAccumulator {
     public Map<Integer, RecordBatch> flush() {
         synchronized (batchLock) {
             if (partitionBatches.isEmpty()) {
-                Logger.info("No batches to flush");
                 return new HashMap<>();
             }
-            
-            Logger.info("Flushing " + partitionBatches.size() + " partition batches");
             
             // Create a copy of current batches to return
             Map<Integer, RecordBatch> batchesToFlush = new HashMap<>(partitionBatches);
@@ -249,8 +187,6 @@ public class RecordAccumulator {
         
         // Check maximum batch timeout (force completion)
         if (batch.isExpired(batchTimeoutMs)) {
-            Logger.warn("Batch {} exceeded maximum timeout ({}ms), forcing completion", 
-                       batch.getBatchId(), batchTimeoutMs);
             return true;
         }
         
@@ -306,97 +242,51 @@ public class RecordAccumulator {
         return record.getTopic();
     }
 
-    /*
-    1. Check for both cases:
-        1A) First-time batch exists -> currentBatch == null
-        1B) Full batches -> !currentBatch.append(record)
-    2. If we are NON-first-time batch, and it's full... we should flush and create a new batch since we flushed the old ones.
-    3. Therefore, in both cases 1A and 1B we still need to call createBatch()... call createBatch() once only for both cases.
-    4. If after logic, we still have a case where the batch is full... investigate further, return failure for now.
-    */
-    public void append(byte[] serializedRecord) throws IOException {
-        // Extract partition and topic from the serialized record
+    public RecordAppendResult append(byte[] serializedRecord, Callback callback) throws IOException {
         int partition = extractPartitionFromRecord(serializedRecord);
         String topicName = extractTopicFromRecord(serializedRecord);
         
+        RecordFuture future = callback != null ? new RecordFuture(callback) : null;
+        boolean newBatchCreated = false;
+        boolean batchIsFull = false;
+        
         synchronized (batchLock) {
             RecordBatch currentBatch = partitionBatches.get(partition);
-            int baseOffset = 0; // TODO: Should be determined by broker/partition
+            int baseOffset = 0;
             
             try {
-                boolean appended = currentBatch != null && currentBatch.append(serializedRecord, topicName, partition);
+                boolean appended = currentBatch != null && 
+                    (future != null ? currentBatch.append(serializedRecord, topicName, partition, future) 
+                                    : currentBatch.append(serializedRecord, topicName, partition));
+                
                 if (!appended) {
-                    if (currentBatch != null) { // Case 1B - batch is full
-                        Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
-                        // Note: We don't auto-flush here, let the caller decide when to flush
-                    }
-                    Logger.info("Creating a new batch for partition " + partition + ".");
+                    if (currentBatch != null) batchIsFull = true;
                     currentBatch = createBatch(partition, baseOffset);
                     partitionBatches.put(partition, currentBatch);
+                    newBatchCreated = true;
                     
-                    if (!currentBatch.append(serializedRecord, topicName, partition)) {
-                        throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
+                    boolean secondAttempt = future != null ? 
+                        currentBatch.append(serializedRecord, topicName, partition, future) :
+                        currentBatch.append(serializedRecord, topicName, partition);
+                        
+                    if (!secondAttempt) {
+                        IllegalStateException ex = new IllegalStateException("Record too large for batch");
+                        if (future != null) future.completeExceptionally(ex);
+                        throw ex;
                     }
-                    recordsAppended.incrementAndGet();
-                } else {
-                    recordsAppended.incrementAndGet();
                 }
-                Logger.info("Record appended successfully to partition " + partition + ".");
+                recordsAppended.incrementAndGet();
+                return new RecordAppendResult(future, batchIsFull, newBatchCreated);
             } catch (Exception e) {
+                if (future != null) future.completeExceptionally(e);
                 Logger.error("Failed to append record: " + e.getMessage(), e);
                 throw e;
             }
         }
     }
     
-    /**
-     * Append a record with callback support and return future
-     * @param serializedRecord the serialized record data
-     * @param callback optional callback to invoke when record is sent
-     * @return RecordAppendResult containing future and batch information
-     */
-    public RecordAppendResult append(byte[] serializedRecord, Callback callback) throws IOException {
-        // Extract partition and topic from the serialized record
-        int partition = extractPartitionFromRecord(serializedRecord);
-        String topicName = extractTopicFromRecord(serializedRecord);
-        
-        RecordFuture future = new RecordFuture(callback);
-        boolean newBatchCreated = false;
-        boolean batchIsFull = false;
-        
-        synchronized (batchLock) {
-            RecordBatch currentBatch = partitionBatches.get(partition);
-            int baseOffset = 0; // TODO: Should be determined by broker/partition
-            
-            try {
-                boolean appended = currentBatch != null && currentBatch.append(serializedRecord, topicName, partition, future);
-                if (!appended) {
-                    if (currentBatch != null) { // Case 1B - batch is full
-                        Logger.info("Batch for partition " + partition + " is full. Creating new batch.");
-                        batchIsFull = true;
-                    }
-                    Logger.info("Creating a new batch for partition " + partition + ".");
-                    currentBatch = createBatch(partition, baseOffset);
-                    partitionBatches.put(partition, currentBatch);
-                    newBatchCreated = true;
-                    
-                    if (!currentBatch.append(serializedRecord, topicName, partition, future)) {
-                        future.completeExceptionally(new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration."));
-                        throw new IllegalStateException("Serialized record cannot fit into a new batch. Check batch size configuration.");
-                    }
-                    recordsAppended.incrementAndGet();
-                } else {
-                    recordsAppended.incrementAndGet();
-                }
-                Logger.info("Record appended successfully to partition " + partition + ".");
-                
-                return new RecordAppendResult(future, batchIsFull, newBatchCreated);
-            } catch (Exception e) {
-                future.completeExceptionally(e);
-                Logger.error("Failed to append record: " + e.getMessage(), e);
-                throw e;
-            }
-        }
+    public void append(byte[] serializedRecord) throws IOException {
+        append(serializedRecord, null);
     }
 
     /**
@@ -475,74 +365,11 @@ public class RecordAccumulator {
      * Validate all configuration parameters
      */
     private void validateConfiguration(int batchSize, long lingerMs, long batchTimeoutMs, double batchSizeThreshold, long bufferMemory) {
-        validateBatchSize(batchSize);
-        validateLingerMs(lingerMs);
-        validateBatchTimeoutMs(batchTimeoutMs, lingerMs);
-        validateBatchSizeThreshold(batchSizeThreshold);
-        validateBufferMemory(bufferMemory, batchSize);
-    }
-
-    private int validateBatchSize(int batchSize) {
-        final int MIN_BATCH_SIZE = 1; // Minimum size
-        final int MAX_BATCH_SIZE = 1_048_576; // 1 MB
-
-        if (batchSize < MIN_BATCH_SIZE || batchSize > MAX_BATCH_SIZE) {
-            throw new IllegalArgumentException(
-                    "Batch size must be between " + MIN_BATCH_SIZE + "-" + MAX_BATCH_SIZE + " bytes."
-            );
-        }
-        return batchSize;
-    }
-    
-    private void validateLingerMs(long lingerMs) {
-        final long MIN_LINGER_MS = 0; // No waiting
-        final long MAX_LINGER_MS = 60_000; // 1 minute max
-        
-        if (lingerMs < MIN_LINGER_MS || lingerMs > MAX_LINGER_MS) {
-            throw new IllegalArgumentException(
-                    "Linger time must be between " + MIN_LINGER_MS + "-" + MAX_LINGER_MS + " milliseconds."
-            );
-        }
-    }
-    
-    private void validateBatchTimeoutMs(long batchTimeoutMs, long lingerMs) {
-        final long MAX_BATCH_TIMEOUT_MS = 300_000; // 5 minutes max
-        
-        if (batchTimeoutMs < lingerMs) {
-            throw new IllegalArgumentException(
-                    "Batch timeout (" + batchTimeoutMs + "ms) must be greater than or equal to linger time (" + lingerMs + "ms)."
-            );
-        }
-        
-        if (batchTimeoutMs > MAX_BATCH_TIMEOUT_MS) {
-            throw new IllegalArgumentException(
-                    "Batch timeout must not exceed " + MAX_BATCH_TIMEOUT_MS + " milliseconds."
-            );
-        }
-    }
-    
-    private void validateBatchSizeThreshold(double batchSizeThreshold) {
-        if (batchSizeThreshold <= 0.0 || batchSizeThreshold > 1.0) {
-            throw new IllegalArgumentException(
-                    "Batch size threshold must be between 0.0 and 1.0 (exclusive of 0.0, inclusive of 1.0)."
-            );
-        }
-    }
-    
-    private void validateBufferMemory(long bufferMemory, int batchSize) {
-        final long MAX_BUFFER_MEMORY = 1_073_741_824L; // 1GB
-        
-        if (bufferMemory < batchSize) {
-            throw new IllegalArgumentException(
-                    "Buffer memory (" + bufferMemory + " bytes) must be at least as large as batch size (" + batchSize + " bytes)."
-            );
-        }
-        
-        if (bufferMemory > MAX_BUFFER_MEMORY) {
-            throw new IllegalArgumentException(
-                    "Buffer memory must not exceed " + MAX_BUFFER_MEMORY + " bytes (1GB)."
-            );
-        }
+        if (batchSize < 1 || batchSize > 1_048_576) throw new IllegalArgumentException("Batch size must be 1-1048576 bytes");
+        if (lingerMs < 0 || lingerMs > 60_000) throw new IllegalArgumentException("Linger time must be 0-60000ms");
+        if (batchTimeoutMs < lingerMs || batchTimeoutMs > 300_000) throw new IllegalArgumentException("Batch timeout invalid");
+        if (batchSizeThreshold <= 0.0 || batchSizeThreshold > 1.0) throw new IllegalArgumentException("Batch size threshold must be 0.0-1.0");
+        if (bufferMemory < batchSize || bufferMemory > 1_073_741_824L) throw new IllegalArgumentException("Buffer memory invalid");
     }
     
     /**
@@ -573,7 +400,6 @@ public class RecordAccumulator {
                 batch.releaseBuffer();
             }
         }
-        Logger.debug("Released buffers for {} sent batches", sentBatches.size());
     }
     
     /**
@@ -585,7 +411,6 @@ public class RecordAccumulator {
         RecordBatch batch = findBatchById(batchId);
         if (batch != null) {
             batch.setSentTime(System.currentTimeMillis());
-            Logger.debug("Batch {} marked as SENDING", batchId);
         } else {
             Logger.warn("Could not find batch {} to mark as sending", batchId);
         }
@@ -615,7 +440,6 @@ public class RecordAccumulator {
             batch.releaseBuffer(); // Release buffer back to pool
             inflightBatches.remove(batchId);
             batchesSent.incrementAndGet();
-            Logger.info("Batch {} completed successfully with base offset {}", batchId, baseOffset);
         } else {
             Logger.warn("Could not find batch {} to mark as successful", batchId);
         }
@@ -682,39 +506,9 @@ public class RecordAccumulator {
         );
     }
     
-    /**
-     * Simple metrics class for monitoring.
-     */
-    public static class AccumulatorMetrics {
-        public final long batchesCreated;
-        public final long batchesSent;
-        public final long batchesFailed;
-        public final long recordsAppended;
-        public final int inflightBatches;
-        public final long availableMemory;
-        public final long totalMemory;
-        
-        public AccumulatorMetrics(long batchesCreated, long batchesSent, long batchesFailed,
-                                 long recordsAppended, int inflightBatches, 
-                                 long availableMemory, long totalMemory) {
-            this.batchesCreated = batchesCreated;
-            this.batchesSent = batchesSent;
-            this.batchesFailed = batchesFailed;
-            this.recordsAppended = recordsAppended;
-            this.inflightBatches = inflightBatches;
-            this.availableMemory = availableMemory;
-            this.totalMemory = totalMemory;
-        }
-        
-        @Override
-        public String toString() {
-            return String.format(
-                "Metrics[batches=(created=%d, sent=%d, failed=%d), records=%d, inflight=%d, memory=%d/%d]",
-                batchesCreated, batchesSent, batchesFailed, recordsAppended, 
-                inflightBatches, availableMemory, totalMemory
-            );
-        }
-    }
+    public record AccumulatorMetrics(long batchesCreated, long batchesSent, long batchesFailed,
+                                     long recordsAppended, int inflightBatches, 
+                                     long availableMemory, long totalMemory) {}
     
     /**
      * Close the accumulator and release all resources
@@ -743,7 +537,6 @@ public class RecordAccumulator {
                 bufferPool.close();
             }
             
-            Logger.info("RecordAccumulator closed and resources released");
         }
     }
 }
