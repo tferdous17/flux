@@ -1,15 +1,23 @@
 package producer;
 
 import commons.CompressionType;
-import commons.header.Header;
 import commons.headers.Headers;
+import metadata.Metadata;
+import metadata.snapshots.ClusterSnapshot;
+import metadata.snapshots.PartitionMetadata;
+import metadata.snapshots.TopicMetadata;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.mockito.Mockito.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -113,6 +121,30 @@ public class DrainReadyLogicTest {
     
     @Test
     public void testDrainLogic() throws IOException, InterruptedException {
+        // Mock Metadata to provide partition-to-broker mapping
+        try (MockedStatic<Metadata> metadataMock = mockStatic(Metadata.class)) {
+            Metadata mockMetadataInstance = mock(Metadata.class);
+            metadataMock.when(Metadata::getInstance).thenReturn(mockMetadataInstance);
+            
+            // Create mock cluster snapshot
+            ClusterSnapshot mockSnapshot = mock(ClusterSnapshot.class);
+            AtomicReference<ClusterSnapshot> snapshotRef = new AtomicReference<>(mockSnapshot);
+            when(mockMetadataInstance.getClusterMetadataSnapshot()).thenReturn(snapshotRef);
+            
+            // Setup mock topic metadata for TestTopic with 3 partitions
+            Map<String, TopicMetadata> topics = new HashMap<>();
+            TopicMetadata topicMetadata = mock(TopicMetadata.class);
+            Map<Integer, PartitionMetadata> partitions = new HashMap<>();
+            
+            for (int i = 0; i < 3; i++) {
+                PartitionMetadata partitionMetadata = mock(PartitionMetadata.class);
+                when(partitionMetadata.brokerId()).thenReturn("localhost:50051");
+                partitions.put(i, partitionMetadata);
+            }
+            
+            when(topicMetadata.partitions()).thenReturn(partitions);
+            topics.put("TestTopic", topicMetadata);
+            when(mockSnapshot.topics()).thenReturn(topics);
         ProducerConfig config = new ProducerConfig(512, 50, 1024L * 1024, CompressionType.GZIP, 60000L); // 50ms linger
         RecordAccumulator accumulator = new RecordAccumulator(config, 5);
         
@@ -150,8 +182,8 @@ public class DrainReadyLogicTest {
         long initialMemoryUsage = accumulator.getTotalBytesUsed();
         assertTrue(initialMemoryUsage > 0);
         
-        // Drain ready batches (pass null to drain all partitions)
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
+        // Drain ready batches
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain("localhost:50051", readyPartitions, 10485760);
         
         // Verify drained batches
         assertEquals(3, drainedBatches.size()); // All 3 partitions should be drained
@@ -170,10 +202,33 @@ public class DrainReadyLogicTest {
         // Verify memory usage decreased
         long finalMemoryUsage = accumulator.getTotalBytesUsed();
         assertTrue(finalMemoryUsage < initialMemoryUsage);
+        }
     }
     
     @Test
     public void testDrainWithCompression() throws IOException {
+        // Mock Metadata to provide partition-to-broker mapping
+        try (MockedStatic<Metadata> metadataMock = mockStatic(Metadata.class)) {
+            Metadata mockMetadataInstance = mock(Metadata.class);
+            metadataMock.when(Metadata::getInstance).thenReturn(mockMetadataInstance);
+            
+            // Create mock cluster snapshot
+            ClusterSnapshot mockSnapshot = mock(ClusterSnapshot.class);
+            AtomicReference<ClusterSnapshot> snapshotRef = new AtomicReference<>(mockSnapshot);
+            when(mockMetadataInstance.getClusterMetadataSnapshot()).thenReturn(snapshotRef);
+            
+            // Setup mock topic metadata for TestTopic with partition 0
+            Map<String, TopicMetadata> topics = new HashMap<>();
+            TopicMetadata topicMetadata = mock(TopicMetadata.class);
+            Map<Integer, PartitionMetadata> partitions = new HashMap<>();
+            
+            PartitionMetadata partitionMetadata = mock(PartitionMetadata.class);
+            when(partitionMetadata.brokerId()).thenReturn("localhost:50051");
+            partitions.put(0, partitionMetadata);
+            
+            when(topicMetadata.partitions()).thenReturn(partitions);
+            topics.put("TestTopic", topicMetadata);
+            when(mockSnapshot.topics()).thenReturn(topics);
         ProducerConfig config = new ProducerConfig(1000, 5000, 1024L * 1024, CompressionType.GZIP, 60000L); // GZIP compression
         RecordAccumulator accumulator = new RecordAccumulator(config, 3);
         
@@ -190,8 +245,8 @@ public class DrainReadyLogicTest {
         // Force the batch to be ready by making it full
         List<TopicPartition> readyPartitions = List.of(new TopicPartition("TestTopic", 0));
         
-        // Drain the batch (pass null to drain all partitions)
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
+        // Drain the batch
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain("localhost:50051", readyPartitions, 10485760);
         
         // Verify compression was applied
         RecordBatch drainedBatch = drainedBatches.get(new TopicPartition("TestTopic", 0));
@@ -200,28 +255,53 @@ public class DrainReadyLogicTest {
         
         // Compressed size should be smaller than original
         assertTrue(drainedBatch.getDataSize() < drainedBatch.getCurrBatchSizeInBytes());
+        }
     }
     
     @Test
     public void testDrainWithCompressionDisabled() throws IOException {
-        ProducerConfig config = new ProducerConfig(1000, 5000, 1024L * 1024, CompressionType.NONE, 60000L); // No compression
-        RecordAccumulator accumulator = new RecordAccumulator(config, 3);
-        
-        Headers headers = new Headers();
-        
-        ProducerRecord<String, String> record = new ProducerRecord<>(
-                "TestTopic", 0, System.currentTimeMillis(), "key", "test data", headers
-        );
-        
-        accumulator.append(ProducerRecordCodec.serialize(record, String.class, String.class));
-        
-        List<TopicPartition> readyPartitions = List.of(new TopicPartition("TestTopic", 0));
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, readyPartitions);
-        
-        // Verify compression was not applied
-        RecordBatch drainedBatch = drainedBatches.get(new TopicPartition("TestTopic", 0));
-        assertNotNull(drainedBatch);
-        assertFalse(drainedBatch.isCompressed());
+        // Mock Metadata to provide partition-to-broker mapping
+        try (MockedStatic<Metadata> metadataMock = mockStatic(Metadata.class)) {
+            Metadata mockMetadataInstance = mock(Metadata.class);
+            metadataMock.when(Metadata::getInstance).thenReturn(mockMetadataInstance);
+            
+            // Create mock cluster snapshot
+            ClusterSnapshot mockSnapshot = mock(ClusterSnapshot.class);
+            AtomicReference<ClusterSnapshot> snapshotRef = new AtomicReference<>(mockSnapshot);
+            when(mockMetadataInstance.getClusterMetadataSnapshot()).thenReturn(snapshotRef);
+            
+            // Setup mock topic metadata for TestTopic with partition 0
+            Map<String, TopicMetadata> topics = new HashMap<>();
+            TopicMetadata topicMetadata = mock(TopicMetadata.class);
+            Map<Integer, PartitionMetadata> partitions = new HashMap<>();
+            
+            PartitionMetadata partitionMetadata = mock(PartitionMetadata.class);
+            when(partitionMetadata.brokerId()).thenReturn("localhost:50051");
+            partitions.put(0, partitionMetadata);
+            
+            when(topicMetadata.partitions()).thenReturn(partitions);
+            topics.put("TestTopic", topicMetadata);
+            when(mockSnapshot.topics()).thenReturn(topics);
+            
+            ProducerConfig config = new ProducerConfig(1000, 5000, 1024L * 1024, CompressionType.NONE, 60000L); // No compression
+            RecordAccumulator accumulator = new RecordAccumulator(config, 3);
+            
+            Headers headers = new Headers();
+            
+            ProducerRecord<String, String> record = new ProducerRecord<>(
+                    "TestTopic", 0, System.currentTimeMillis(), "key", "test data", headers
+            );
+            
+            accumulator.append(ProducerRecordCodec.serialize(record, String.class, String.class));
+            
+            List<TopicPartition> readyPartitions = List.of(new TopicPartition("TestTopic", 0));
+            Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain("localhost:50051", readyPartitions, 10485760);
+            
+            // Verify compression was not applied
+            RecordBatch drainedBatch = drainedBatches.get(new TopicPartition("TestTopic", 0));
+            assertNotNull(drainedBatch);
+            assertFalse(drainedBatch.isCompressed());
+        }
     }
     
     @Test
@@ -229,7 +309,7 @@ public class DrainReadyLogicTest {
         RecordAccumulator accumulator = new RecordAccumulator(new ProducerConfig(), 3);
         
         // Drain with empty list should return empty map
-        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(null, List.of());
+        Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain("localhost:50051", List.of(), 10485760);
         assertTrue(drainedBatches.isEmpty());
     }
     

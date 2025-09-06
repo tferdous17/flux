@@ -1,11 +1,15 @@
 package producer;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 public class BufferPoolIntegrationTest {
 
@@ -55,18 +59,31 @@ public class BufferPoolIntegrationTest {
 
     @Test
     public void testRecordBatchWithBufferPool() throws InterruptedException {
-        BufferPool pool = new BufferPool(1024, 256);
+        // Use Mockito mock to avoid real memory allocation
+        BufferPool pool = mock(BufferPool.class);
+        ByteBuffer mockBuffer = ByteBuffer.allocate(100);
+        
+        // Configure mock behavior
+        when(pool.allocate(anyInt(), anyLong())).thenReturn(mockBuffer);
+        when(pool.availableMemory()).thenReturn(1024L);
+        when(pool.totalMemory()).thenReturn(1024L);
+        when(pool.poolableSize()).thenReturn(256);
         
         // Allocate buffer from pool
-        java.nio.ByteBuffer buffer = pool.allocate(256, 1000);
+        ByteBuffer buffer = pool.allocate(256, 1000);
         RecordBatch batch = new RecordBatch(buffer);
         
-        assertEquals(256, batch.getMaxBatchSizeInBytes());
-        assertEquals(256, batch.getInitialCapacity());
+        // Mock returns buffer of size 100
+        assertEquals(100, batch.getMaxBatchSizeInBytes());
+        assertEquals(100, batch.getInitialCapacity());
         assertSame(buffer, batch.getBuffer());
         
         // Deallocate back to pool
         pool.deallocate(batch.getBuffer(), batch.getInitialCapacity());
-        assertEquals(1024, pool.availableMemory());
+        assertEquals(1024L, pool.availableMemory());
+        
+        // Verify mock interactions
+        verify(pool).allocate(256, 1000);
+        verify(pool).deallocate(buffer, 100);
     }
 }

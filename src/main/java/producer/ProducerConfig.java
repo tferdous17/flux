@@ -16,6 +16,7 @@ public class ProducerConfig {
     private final int retries;
     private final long deliveryTimeoutMs;
     private final int maxInFlightRequests;
+    private final int maxRequestSize;
     
     // Default values 
     private static final int DEFAULT_BATCH_SIZE = 16384; // 16KB
@@ -26,6 +27,7 @@ public class ProducerConfig {
     private static final int DEFAULT_RETRIES = 3;
     private static final long DEFAULT_DELIVERY_TIMEOUT_MS = 120000L; // 120 seconds
     private static final int DEFAULT_MAX_IN_FLIGHT_REQUESTS = 5;
+    private static final int DEFAULT_MAX_REQUEST_SIZE = 1048576; // 1MB
     
     /**
      * Create ProducerConfig with default values
@@ -39,6 +41,7 @@ public class ProducerConfig {
         this.retries = DEFAULT_RETRIES;
         this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
         this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
+        this.maxRequestSize = DEFAULT_MAX_REQUEST_SIZE;
     }
     
     /**
@@ -77,6 +80,9 @@ public class ProducerConfig {
         this.maxInFlightRequests = Integer.parseInt(
             props.getProperty("max.in.flight.requests", String.valueOf(DEFAULT_MAX_IN_FLIGHT_REQUESTS))
         );
+        this.maxRequestSize = Integer.parseInt(
+            props.getProperty("max.request.size", String.valueOf(DEFAULT_MAX_REQUEST_SIZE))
+        );
     }
     
     
@@ -93,6 +99,7 @@ public class ProducerConfig {
         this.retries = DEFAULT_RETRIES;
         this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
         this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
+        this.maxRequestSize = DEFAULT_MAX_REQUEST_SIZE;
     }
     
     public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, CompressionType compressionType, long maxBlockMs) {
@@ -105,6 +112,7 @@ public class ProducerConfig {
         this.retries = DEFAULT_RETRIES;
         this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
         this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
+        this.maxRequestSize = DEFAULT_MAX_REQUEST_SIZE;
     }
     
     public int getBatchSize() {
@@ -137,6 +145,10 @@ public class ProducerConfig {
     
     public int getMaxInFlightRequests() {
         return maxInFlightRequests;
+    }
+    
+    public int getMaxRequestSize() {
+        return maxRequestSize;
     }
     
     private void validateBatchSize(int batchSize) {

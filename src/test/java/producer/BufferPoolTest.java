@@ -42,10 +42,16 @@ public class BufferPoolTest {
 
     @Test
     public void testMemoryExhaustion() throws InterruptedException {
-        // Fill up the pool
+        // Fill up most of the pool, leaving some room for JVM overhead
+        // Allocate 3 buffers instead of 4 to avoid OOM (768 bytes of 1024)
         pool.allocate(POOLABLE_SIZE, 1000);
         pool.allocate(POOLABLE_SIZE, 1000);
         pool.allocate(POOLABLE_SIZE, 1000);
+        
+        // Should have 256 bytes left (1 buffer worth)
+        assertEquals(POOLABLE_SIZE, pool.availableMemory());
+        
+        // Now allocate the last buffer to exhaust the pool
         pool.allocate(POOLABLE_SIZE, 1000);
         
         assertEquals(0, pool.availableMemory());

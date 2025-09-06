@@ -2,14 +2,19 @@ package producer;
 
 import commons.header.Header;
 import commons.headers.Headers;
-import org.junit.jupiter.api.BeforeAll;
+import commons.utils.PartitionSelector;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.mockStatic;
 
 /**
  * Tests for batch expiry functionality in RecordAccumulator.
@@ -17,10 +22,25 @@ import static org.junit.jupiter.api.Assertions.*;
  * memory is reclaimed when delivery timeout is exceeded.
  */
 public class BatchExpiryTest {
+    private MockedStatic<PartitionSelector> mockPartitionSelector;
     
-    @BeforeAll
-    public static void setUp() throws IOException {
-        SharedTestServer.startServer();
+    @BeforeEach
+    public void setUp() {
+        // Mock PartitionSelector to return the specified partition or default to 0
+        mockPartitionSelector = mockStatic(PartitionSelector.class);
+        mockPartitionSelector.when(() -> PartitionSelector.getPartitionNumberForRecord(
+                any(), anyInt(), any(), any(), anyInt()))
+            .thenAnswer(invocation -> {
+                Integer partitionNumber = invocation.getArgument(1);
+                return partitionNumber != null ? partitionNumber : 0;
+            });
+    }
+    
+    @AfterEach
+    public void tearDown() {
+        if (mockPartitionSelector != null) {
+            mockPartitionSelector.close();
+        }
     }
     
     @Test

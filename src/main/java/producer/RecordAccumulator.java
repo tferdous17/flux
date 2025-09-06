@@ -321,30 +321,15 @@ public class RecordAccumulator {
     /**
      * Drain ready batches from the accumulator for a specific broker
      * Uses per-broker round-robin to ensure fairness across all partitions
-     * @param brokerAddress The broker address to drain batches for (if null, drains all)
+     * @param brokerAddress The broker address to drain batches for
      * @param readyPartitions List of TopicPartition that have ready batches
+     * @param maxSize Maximum size in bytes to drain
      * @return Map of drained batches by TopicPartition
      */
-    public synchronized Map<TopicPartition, RecordBatch> drain(String brokerAddress, List<TopicPartition> readyPartitions) throws IOException {
+    public synchronized Map<TopicPartition, RecordBatch> drain(String brokerAddress, List<TopicPartition> readyPartitions, int maxSize) throws IOException {
         Map<TopicPartition, RecordBatch> drainedBatches = new ConcurrentHashMap<>();
         
-        if (readyPartitions.isEmpty()) {
-            return drainedBatches;
-        }
-        
-        // If no broker specified, drain from all ready partitions (legacy behavior)
-        if (brokerAddress == null) {
-            // For null broker, just drain the first ready partition found
-            for (TopicPartition topicPartition : readyPartitions) {
-                Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
-                if (deque != null && !deque.isEmpty()) {
-                    RecordBatch batch = deque.pollFirst();
-                    if (batch != null) {
-                        processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
-                        break; // Only drain one batch per call
-                    }
-                }
-            }
+        if (readyPartitions.isEmpty() || brokerAddress == null) {
             return drainedBatches;
         }
         
@@ -358,40 +343,55 @@ public class RecordAccumulator {
         // Get or initialize the drain index for this broker
         int brokerDrainIndex = drainIndexPerBroker.computeIfAbsent(brokerAddress, k -> 0);
         
-        // Start from the broker's current index and look for a ready partition
+        // Track total size drained and last successfully drained index
+        int totalSize = 0;
         int partitionCount = brokerPartitions.size();
-        int start = brokerDrainIndex % partitionCount;
-        int current = start;
-        boolean batchDrained = false;
+        int current = brokerDrainIndex % partitionCount;
+        int partitionsChecked = 0;
+        int lastDrainedIndex = current;
         
-        // Round-robin through all broker partitions to find one that's ready
-        do {
+        // Keep draining until we hit size limit or check all partitions
+        while (partitionsChecked < partitionCount && totalSize < maxSize) {
             TopicPartition topicPartition = brokerPartitions.get(current);
             
             // Check if this partition is in the ready list
             if (readyPartitions.contains(topicPartition)) {
                 Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
                 if (deque != null && !deque.isEmpty()) {
-                    // Drain the first (oldest) batch from this partition
-                    RecordBatch batch = deque.pollFirst();
+                    RecordBatch batch = deque.peekFirst();
                     if (batch != null) {
-                        processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
-                        batchDrained = true;
-                        break; // Only drain one batch per call for fairness
+                        int batchSize = batch.estimatedSizeInBytes();
+                        
+                        // Check if adding this batch would exceed limit
+                        // Always drain at least one batch even if it exceeds maxSize
+                        if (totalSize + batchSize <= maxSize || drainedBatches.isEmpty()) {
+                            // Poll and drain the batch
+                            batch = deque.pollFirst();
+                            processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
+                            totalSize += batchSize;
+                            lastDrainedIndex = current;
+                        } else {
+                            // Would exceed size limit, stop draining
+                            break;
+                        }
                     }
                 }
             }
             
             current = (current + 1) % partitionCount;
-        } while (current != start);
+            partitionsChecked++;
+        }
         
-        // Update the broker's drain index for next iteration
-        // This ensures we start from the next partition next time
-        drainIndexPerBroker.put(brokerAddress, (brokerDrainIndex + 1) % partitionCount);
+        // Update index to continue from where we left off
+        // Move to the next partition after the last drained one
+        drainIndexPerBroker.put(brokerAddress, (lastDrainedIndex + 1) % partitionCount);
         
-        if (!batchDrained && !readyPartitions.isEmpty()) {
-            Logger.debug("No batch drained for broker {} despite {} ready partitions", 
+        if (drainedBatches.isEmpty() && !readyPartitions.isEmpty()) {
+            Logger.debug("No batches drained for broker {} despite {} ready partitions", 
                         brokerAddress, readyPartitions.size());
+        } else if (!drainedBatches.isEmpty()) {
+            Logger.debug("Drained {} batches ({} bytes) for broker {}", 
+                        drainedBatches.size(), totalSize, brokerAddress);
         }
         
         return drainedBatches;

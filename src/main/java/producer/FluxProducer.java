@@ -31,6 +31,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private String bootstrapServer = "localhost:50051"; // default broker addr to send records to
     private ManagedChannel channel;
     private RecordAccumulator accumulator;
+    private ProducerConfig config;
     private AtomicReference<ClusterSnapshot> cachedClusterMetadata; // read-heavy
 
     public FluxProducer(Properties props, long initialFlushDelay, long flushDelayInterval) {
@@ -55,7 +56,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 .numPartitions();
         
         // Initialize accumulator with ProducerConfig from properties
-        ProducerConfig config = new ProducerConfig(props);
+        config = new ProducerConfig(props);
         accumulator = new RecordAccumulator(config, currentNumBrokerPartitions);
 
         // Use linger.ms from config for scheduling interval (convert to milliseconds)
@@ -136,7 +137,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 List<TopicPartition> brokerPartitions = brokerEntry.getValue();
                 
                 // Drain batches for this specific broker
-                Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(brokerAddress, brokerPartitions);
+                Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(brokerAddress, brokerPartitions, config.getMaxRequestSize());
                 
                 if (drainedBatches.isEmpty()) {
                     continue;

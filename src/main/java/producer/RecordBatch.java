@@ -192,6 +192,14 @@ public class RecordBatch {
     }
     
     /**
+     * Get the estimated size of this batch in bytes
+     * @return Estimated size in bytes (current position in the buffer)
+     */
+    public int estimatedSizeInBytes() {
+        return batch.position();
+    }
+    
+    /**
      * Get the retry count for this batch
      * 
      * @return retry count
