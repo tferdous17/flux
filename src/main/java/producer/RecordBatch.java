@@ -15,6 +15,7 @@ public class RecordBatch {
     private CompressionType compressionType;
     private byte[] compressedData;
     private final int initialCapacity; // Track initial capacity for BufferPool deallocation
+    private int retryCount;
 
     private static final int DEFAULT_BATCH_SIZE = 10_240; // default batch size: 10 KB = 10,240 bytes
 
@@ -35,6 +36,7 @@ public class RecordBatch {
         this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
         this.compressedData = null;
         this.initialCapacity = maxBatchSizeInBytes;
+        this.retryCount = 0;
     }
 
     /**
@@ -55,6 +57,7 @@ public class RecordBatch {
         this.compressionType = compressionType != null ? compressionType : CompressionType.NONE;
         this.compressedData = null;
         this.initialCapacity = buffer.capacity();
+        this.retryCount = 0;
     }
 
     // NOTE: This method may need refactoring once SerializedRecord (Producer) is implemented, but logic remains same
@@ -186,5 +189,21 @@ public class RecordBatch {
      */
     public ByteBuffer getBuffer() {
         return batch;
+    }
+    
+    /**
+     * Get the retry count for this batch
+     * 
+     * @return retry count
+     */
+    public int getRetryCount() {
+        return retryCount;
+    }
+    
+    /**
+     * Increment the retry count for this batch
+     */
+    public void incrementRetryCount() {
+        retryCount++;
     }
 }

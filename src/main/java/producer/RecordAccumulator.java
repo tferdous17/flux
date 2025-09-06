@@ -12,11 +12,13 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecordAccumulator {
     private final ProducerConfig config;
     private final BufferPool free; // BufferPool for memory management
     private Map<TopicPartition, Deque<RecordBatch>> partitionBatches; // Per topic-partition batch queues
+    private final Map<TopicPartition, AtomicInteger> inFlightBatches; // Track in-flight batches per partition
     private final int numPartitions;
 
     public RecordAccumulator(int numPartitions) {
@@ -28,6 +30,7 @@ public class RecordAccumulator {
         this.config = config;
         this.free = new BufferPool(config.getBufferMemory(), config.getBatchSize());
         this.partitionBatches = new ConcurrentHashMap<>();
+        this.inFlightBatches = new ConcurrentHashMap<>();
         this.numPartitions = numPartitions;
         validateBatchSize(config.getBatchSize());
     }
@@ -263,5 +266,34 @@ public class RecordAccumulator {
      */
     public BufferPool getBufferPool() {
         return free;
+    }
+    
+    /**
+     * Increment the in-flight batch count for a topic-partition
+     * @param topicPartition The topic-partition to increment
+     */
+    public void incrementInFlight(TopicPartition topicPartition) {
+        inFlightBatches.computeIfAbsent(topicPartition, k -> new AtomicInteger(0)).incrementAndGet();
+    }
+    
+    /**
+     * Decrement the in-flight batch count for a topic-partition
+     * @param topicPartition The topic-partition to decrement
+     */
+    public void decrementInFlight(TopicPartition topicPartition) {
+        AtomicInteger count = inFlightBatches.get(topicPartition);
+        if (count != null) {
+            count.decrementAndGet();
+        }
+    }
+    
+    /**
+     * Get the current in-flight batch count for a topic-partition
+     * @param topicPartition The topic-partition to check
+     * @return The number of in-flight batches (0 if none)
+     */
+    public int getInFlightCount(TopicPartition topicPartition) {
+        AtomicInteger count = inFlightBatches.get(topicPartition);
+        return count != null ? count.get() : 0;
     }
 }

@@ -13,6 +13,9 @@ public class ProducerConfig {
     private final CompressionType compressionType;
     private final long bufferMemory;
     private final long maxBlockMs;
+    private final int retries;
+    private final long deliveryTimeoutMs;
+    private final int maxInFlightRequests;
     
     // Default values 
     private static final int DEFAULT_BATCH_SIZE = 16384; // 16KB
@@ -20,6 +23,9 @@ public class ProducerConfig {
     private static final CompressionType DEFAULT_COMPRESSION_TYPE = CompressionType.NONE;
     private static final long DEFAULT_BUFFER_MEMORY = 33554432L; // 32MB
     private static final long DEFAULT_MAX_BLOCK_MS = 60000L; // 60 seconds
+    private static final int DEFAULT_RETRIES = 3;
+    private static final long DEFAULT_DELIVERY_TIMEOUT_MS = 120000L; // 120 seconds
+    private static final int DEFAULT_MAX_IN_FLIGHT_REQUESTS = 5;
     
     /**
      * Create ProducerConfig with default values
@@ -30,6 +36,9 @@ public class ProducerConfig {
         this.compressionType = DEFAULT_COMPRESSION_TYPE;
         this.bufferMemory = DEFAULT_BUFFER_MEMORY;
         this.maxBlockMs = DEFAULT_MAX_BLOCK_MS;
+        this.retries = DEFAULT_RETRIES;
+        this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
+        this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
     }
     
     /**
@@ -57,6 +66,15 @@ public class ProducerConfig {
         this.maxBlockMs = Long.parseLong(
             props.getProperty("max.block.ms", String.valueOf(DEFAULT_MAX_BLOCK_MS))
         );
+        this.retries = Integer.parseInt(
+            props.getProperty("retries", String.valueOf(DEFAULT_RETRIES))
+        );
+        this.deliveryTimeoutMs = Long.parseLong(
+            props.getProperty("delivery.timeout.ms", String.valueOf(DEFAULT_DELIVERY_TIMEOUT_MS))
+        );
+        this.maxInFlightRequests = Integer.parseInt(
+            props.getProperty("max.in.flight.requests", String.valueOf(DEFAULT_MAX_IN_FLIGHT_REQUESTS))
+        );
     }
     
     
@@ -69,6 +87,9 @@ public class ProducerConfig {
         this.compressionType = compressionEnabled ? CompressionType.GZIP : CompressionType.NONE;
         this.bufferMemory = bufferMemory;
         this.maxBlockMs = maxBlockMs;
+        this.retries = DEFAULT_RETRIES;
+        this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
+        this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
     }
     
     public ProducerConfig(int batchSize, int lingerMs, long bufferMemory, CompressionType compressionType, long maxBlockMs) {
@@ -77,6 +98,9 @@ public class ProducerConfig {
         this.compressionType = compressionType != null ? compressionType : DEFAULT_COMPRESSION_TYPE;
         this.bufferMemory = bufferMemory;
         this.maxBlockMs = maxBlockMs;
+        this.retries = DEFAULT_RETRIES;
+        this.deliveryTimeoutMs = DEFAULT_DELIVERY_TIMEOUT_MS;
+        this.maxInFlightRequests = DEFAULT_MAX_IN_FLIGHT_REQUESTS;
     }
     
     public int getBatchSize() {
@@ -97,5 +121,17 @@ public class ProducerConfig {
     
     public long getMaxBlockMs() {
         return maxBlockMs;
+    }
+    
+    public int getRetries() {
+        return retries;
+    }
+    
+    public long getDeliveryTimeoutMs() {
+        return deliveryTimeoutMs;
+    }
+    
+    public int getMaxInFlightRequests() {
+        return maxInFlightRequests;
     }
 }
