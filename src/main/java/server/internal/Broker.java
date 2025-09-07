@@ -185,12 +185,13 @@ public class Broker implements Controller {
         }
 
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
-        // TODO: BROKEN VIA MERGE CONFLICT -- GOING TO PURPOSELY FIX IN SEPARATE PR
-        partitions.forEach(p -> {
-            partitionMetadataMap.put(
-                    p.getPartitionId(),
-                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
-            );
+        topicPartitions.forEach((_, partitionList) -> {
+            partitionList.forEach(p -> {
+                partitionMetadataMap.put(
+                        p.getPartitionId(),
+                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
+                );
+            });
         });
 
         this.controllerMetadata.set(new BrokerMetadata(
@@ -205,13 +206,15 @@ public class Broker implements Controller {
     public void updateBrokerMetadata() {
         // Periodically the broker will send its most up-to-date metadata to the Controller node
         Map<Integer, PartitionMetadata> partitionMetadataMap = new HashMap<>();
-        // TODO: SAME AS ABOVE TODO
-        partitions.forEach(p -> {
-            partitionMetadataMap.put(
-                    p.getPartitionId(),
-                    new PartitionMetadata(p.getPartitionId(), this.brokerId)
-            );
+        topicPartitions.forEach((_, partitionList) -> {
+            partitionList.forEach(p -> {
+                partitionMetadataMap.put(
+                        p.getPartitionId(),
+                        new PartitionMetadata(p.getPartitionId(), this.brokerId)
+                );
+            });
         });
+
         if (!isActiveController) {
             UpdateBrokerMetadataRequest request = UpdateBrokerMetadataRequest
                     .newBuilder()
