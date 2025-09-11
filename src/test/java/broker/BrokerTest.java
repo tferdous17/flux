@@ -14,10 +14,11 @@ public class BrokerTest {
     @Test
     public void produceMessagesTest() throws IOException {
         Broker broker = new Broker();
+        broker.setIsActiveController(true); // Enable topic creation
         
         // First create a topic
         Topic testTopic = Topic.newBuilder()
-                .setTopicName("test-topic")
+                .setTopicName("broker-test-topic")
                 .setNumPartitions(3)
                 .setReplicationFactor(1)
                 .build();
@@ -31,7 +32,7 @@ public class BrokerTest {
         batch.append(new byte[]{14, 6, 72, 1, 121, 31, 34, 123, 93});
         batch.append(new byte[]{90, 3, 2, 0, 102, 12, 34, 123, 93});
 
-        broker.produceMessages("test-topic", batch);
+        broker.produceMessages("broker-test-topic", batch);
     }
 
     @Test

@@ -74,25 +74,27 @@ public class Broker implements Controller {
         if (!isActiveController) {
             return;
         }
+        // TODO: im assuming this is old code? so I made the forl loop below to process all topics
+        // // right now just worry about creating 1 topic
+        // proto.Topic firstTopic = topics.stream().findFirst()
+        // .orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
+        // Process all topics
+        for (proto.Topic topicRequest : topics) {
+            String topicName = topicRequest.getTopicName();
+            int numPartitionsToCreate = topicRequest.getNumPartitions();
+            int replicationFactor = topicRequest.getReplicationFactor();
 
-        // right now just worry about creating 1 topic
-        proto.Topic firstTopic = topics.stream().findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
-        String topicName = firstTopic.getTopicName();
-        int numPartitionsToCreate = firstTopic.getNumPartitions();
-        int replicationFactor = firstTopic.getReplicationFactor();
+            // Will throw runtime exception if it can not validate this creation request
+            validateTopicCreation(topicName, numPartitionsToCreate, replicationFactor);
 
-        // Will throw runtime exception if it can not validate this creation request
-        validateTopicCreation(topicName, numPartitionsToCreate, replicationFactor);
-
-        List<Partition> newTopicPartitions = new ArrayList<>();
-        // Each topic's partitions start from ID 0
-        for (int i = 0; i < numPartitionsToCreate; i++) {
-            Partition p = new Partition(topicName, i);
-            newTopicPartitions.add(p);
-            this.numPartitions++;
-        }
-        this.topicPartitions.put(topicName, newTopicPartitions);
+            List<Partition> newTopicPartitions = new ArrayList<>();
+            // Each topic's partitions start from ID 0
+            for (int i = 0; i < numPartitionsToCreate; i++) {
+                Partition p = new Partition(topicName, i);
+                newTopicPartitions.add(p);
+                this.numPartitions++;
+            }
+            this.topicPartitions.put(topicName, newTopicPartitions);
 
         FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
