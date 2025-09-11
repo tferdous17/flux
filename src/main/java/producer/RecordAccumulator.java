@@ -333,47 +333,51 @@ public class RecordAccumulator {
             return drainedBatches;
         }
         
-        // Get ALL partitions for this broker (not just ready ones) for stable round-robin
-        List<TopicPartition> brokerPartitions = getPartitionsForBroker(brokerAddress);
-        if (brokerPartitions.isEmpty()) {
-            Logger.warn("No partitions found for broker {}", brokerAddress);
+        // Filter ready partitions to only include those belonging to this broker
+        List<TopicPartition> brokerReadyPartitions = new ArrayList<>();
+        for (TopicPartition tp : readyPartitions) {
+            String partitionBroker = getBrokerForPartition(tp);
+            if (brokerAddress.equals(partitionBroker)) {
+                brokerReadyPartitions.add(tp);
+            }
+        }
+        
+        if (brokerReadyPartitions.isEmpty()) {
+            Logger.debug("No ready partitions found for broker {}", brokerAddress);
             return drainedBatches;
         }
         
         // Get or initialize the drain index for this broker
         int brokerDrainIndex = drainIndexPerBroker.computeIfAbsent(brokerAddress, k -> 0);
         
-        // Track total size drained and last successfully drained index
+        // Track total size drained
         int totalSize = 0;
-        int partitionCount = brokerPartitions.size();
+        int partitionCount = brokerReadyPartitions.size();
         int current = brokerDrainIndex % partitionCount;
         int partitionsChecked = 0;
         int lastDrainedIndex = current;
         
-        // Keep draining until we hit size limit or check all partitions
+        // Keep draining until we hit size limit or check all ready partitions
         while (partitionsChecked < partitionCount && totalSize < maxSize) {
-            TopicPartition topicPartition = brokerPartitions.get(current);
+            TopicPartition topicPartition = brokerReadyPartitions.get(current);
             
-            // Check if this partition is in the ready list
-            if (readyPartitions.contains(topicPartition)) {
-                Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
-                if (deque != null && !deque.isEmpty()) {
-                    RecordBatch batch = deque.peekFirst();
-                    if (batch != null) {
-                        int batchSize = batch.estimatedSizeInBytes();
-                        
-                        // Check if adding this batch would exceed limit
-                        // Always drain at least one batch even if it exceeds maxSize
-                        if (totalSize + batchSize <= maxSize || drainedBatches.isEmpty()) {
-                            // Poll and drain the batch
-                            batch = deque.pollFirst();
-                            processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
-                            totalSize += batchSize;
-                            lastDrainedIndex = current;
-                        } else {
-                            // Would exceed size limit, stop draining
-                            break;
-                        }
+            Deque<RecordBatch> deque = partitionBatches.get(topicPartition);
+            if (deque != null && !deque.isEmpty()) {
+                RecordBatch batch = deque.peekFirst();
+                if (batch != null) {
+                    int batchSize = batch.estimatedSizeInBytes();
+                    
+                    // Check if adding this batch would exceed limit
+                    // Always drain at least one batch even if it exceeds maxSize
+                    if (totalSize + batchSize <= maxSize || drainedBatches.isEmpty()) {
+                        // Poll and drain the batch
+                        batch = deque.pollFirst();
+                        processBatchForDraining(batch, topicPartition, brokerAddress, drainedBatches, deque);
+                        totalSize += batchSize;
+                        lastDrainedIndex = current;
+                    } else {
+                        // Would exceed size limit, stop draining
+                        break;
                     }
                 }
             }
@@ -386,9 +390,9 @@ public class RecordAccumulator {
         // Move to the next partition after the last drained one
         drainIndexPerBroker.put(brokerAddress, (lastDrainedIndex + 1) % partitionCount);
         
-        if (drainedBatches.isEmpty() && !readyPartitions.isEmpty()) {
+        if (drainedBatches.isEmpty() && !brokerReadyPartitions.isEmpty()) {
             Logger.debug("No batches drained for broker {} despite {} ready partitions", 
-                        brokerAddress, readyPartitions.size());
+                        brokerAddress, brokerReadyPartitions.size());
         } else if (!drainedBatches.isEmpty()) {
             Logger.debug("Drained {} batches ({} bytes) for broker {}", 
                         drainedBatches.size(), totalSize, brokerAddress);
