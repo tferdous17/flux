@@ -44,6 +44,7 @@ public class Broker implements Controller {
     private ControllerServiceGrpc.ControllerServiceFutureStub futureStub;
     private ManagedChannel channel;
     private ShutdownCallback shutdownCallback;
+    private AtomicInteger followerRoundRobinCounter = new AtomicInteger(0);
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
@@ -75,6 +76,57 @@ public class Broker implements Controller {
             return;
         }
 
+        // For each topic to create, we must create a Broker to Partition mapping
+        // Where the mapping represents which partitions should be created under which brokers
+        // So instead of creating every topic's partitions on a single broker, we distribute them evenly via roundrobin
+        // So each broker will get their turn at a partition, then the counter will continue on until we created
+        // all the requested partitions for that topic
+
+        // How to create the mapping itself? Mapping should represent the broker that should receive the partition(s)
+        // and the IDs of the partition itself.
+        // Upon receiving the mappings, the brokers themselves should create and store the partitions themselves
+        List<String> followers = new ArrayList<>(followerNodeEndpoints.keySet());
+        Map<String, List<BrokerToPartitionMapping>> followerMaps = new HashMap<>();
+
+        for (proto.Topic topic : topics) {
+            // Validate topic first
+            String topicName = topic.getTopicName();
+            int numPartitionsToCreate = topic.getNumPartitions();
+            int replicationFactor = topic.getReplicationFactor();
+
+            // Will throw runtime exception if it can not validate this creation request
+            validateTopicCreation(topicName, numPartitionsToCreate, replicationFactor);
+
+            Map<String, List<Integer>> partitionIds = new HashMap<>();
+            int n = topic.getNumPartitions();
+            for (int i = 0; i < n; i++) {
+
+                // Get the broker that we need this partition to go to
+                int brokerIndex = followerRoundRobinCounter.getAndIncrement() % followerNodeEndpoints.size();
+                String brokerId = followers.get(brokerIndex);
+                String brokerAddr = followerNodeEndpoints.get(brokerId);
+
+                if (partitionIds.containsKey(brokerAddr)) {
+                    partitionIds.get(brokerAddr).add(brokerIndex);
+                } else {
+                    partitionIds.put(brokerAddr, new ArrayList<>());
+                    partitionIds.get(brokerAddr).add(brokerIndex);
+                }
+            }
+
+            // After creating all the partitionIds, create a mapping for each broker addr
+            followerNodeEndpoints.forEach((id, addr) -> {
+                BrokerToPartitionMapping map = new BrokerToPartitionMapping(addr, topic.getTopicName(), partitionIds.get(addr));
+                followerMaps.get(addr).add(map);
+            });
+
+        }
+
+        // After all mappings created, then send out a request to each follower
+        // Each request will contain all the partitions it needs to create per topic
+        // Ex: Map1{ "localhost:50051", "topic1", [1,5] }, Map2{ "localhost:50051", "topic2", [0,4] }
+        // Since topics have their own unique set of ids separate from other topics, gotta ensure partitions dont conflict in any way
+
         // right now just worry about creating 1 topic
         proto.Topic firstTopic = topics.stream().findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("topics cannot be empty"));
@@ -97,6 +149,23 @@ public class Broker implements Controller {
         FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
         InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
         Logger.info("BROKER: Create topics completed successfully.");
+    }
+
+    public synchronized void createAssignedTopicPartitions(List<BrokerToPartitionMapping> mappings) {
+        // Ex: Map1{ "localhost:50051", "topic1", [1,5] }, Map2{ "localhost:50051", "topic2", [0,4] }
+        for (BrokerToPartitionMapping mapping : mappings) {
+            List<Integer> partitionIds = mapping.partitionIds();
+
+            for (Integer i : partitionIds) {
+                try {
+                    Partition p = new Partition(mapping.topicName(), i);
+                    topicPartitions.computeIfAbsent(mapping.topicName(), k -> new ArrayList<>()).add(p);
+                    numPartitions++;
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }
     }
 
     @Override
