@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "grpc";
+option java_outer_classname = "HeartbeatProto";
+
+package heartbeat;
+
+// Heartbeat request sent by broker to controller
+message HeartbeatRequest {
+  // Unique identifier for the broker
+  int32 broker_id = 1;
+
+  // Broker network information
+  string host = 2;
+  int32 port = 3;
+
+  // Heartbeat metadata
+  int64 timestamp = 4;
+  int64 sequence_number = 5;
+
+  // Broker status information
+  BrokerLoadInfo load_info = 6;
+}
+
+// Load information for the broker
+message BrokerLoadInfo {
+  // Number of partitions managed by this broker
+  int32 partition_count = 1;
+
+  // Number of active connections
+  int32 connection_count = 2;
+
+  // Available memory in bytes
+  int64 available_memory = 3;
+
+  // CPU usage percentage (0-100)
+  double cpu_usage = 4;
+}
+
+// Response from controller acknowledging heartbeat
+message HeartbeatResponse {
+  // Whether the heartbeat was accepted
+  bool accepted = 1;
+
+  // Controller's timestamp for synchronization
+  int64 controller_timestamp = 2;
+
+  // Any commands or directives from controller
+  ControllerDirective directive = 3;
+
+  // Error message if heartbeat was not accepted
+  string error_message = 4;
+}
+
+// Directives that controller can send to broker
+message ControllerDirective {
+  enum DirectiveType {
+    NONE = 0;
+    SHUTDOWN = 1;
+    REBALANCE = 2;
+    UPDATE_CONFIG = 3;
+  }
+
+  DirectiveType type = 1;
+  string details = 2;
+}
+
+// Service definition for heartbeat
+service HeartbeatService {
+  // Send heartbeat from broker to controller
+  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Batch heartbeat for multiple brokers (future use)
+  rpc SendBatchHeartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+}

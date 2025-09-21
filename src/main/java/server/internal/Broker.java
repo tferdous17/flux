@@ -17,6 +17,7 @@ import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
 import proto.*;
+import server.config.BrokerConfig;
 import server.internal.storage.Partition;
 
 import java.io.IOException;
@@ -34,6 +35,7 @@ public class Broker implements Controller {
     private Map<String, List<Partition>> topicPartitions; // Map of topic name to its partitions
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
     private final PartitionWriteManager writeManager;
+    private final BrokerConfig config;
 
     private boolean isActiveController = false;
     private String clusterId = ""; // that this controller belongs to
@@ -47,26 +49,31 @@ public class Broker implements Controller {
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
-    public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
+    public Broker(String brokerId, String host, int port, BrokerConfig config) throws IOException {
         this.brokerId = brokerId;
         this.host = host;
         this.port = port;
         this.numPartitions = 0; // Start with 0 partitions, they'll be created with topics
         this.topicPartitions = new ConcurrentHashMap<>();
         this.writeManager = new PartitionWriteManager();
+        this.config = config != null ? config : new BrokerConfig();
 
         FluxExecutor
                 .getSchedulerService()
                 .scheduleWithFixedDelay(this::updateBrokerMetadata, 80, 180, TimeUnit.SECONDS);
     }
 
+    public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
+        this(brokerId, host, port, new BrokerConfig());
+    }
+
     public Broker(String brokerId, String host, int port) throws IOException {
-        this(brokerId, host, port, 0); // Start with no partitions
+        this(brokerId, host, port, new BrokerConfig());
     }
 
     public Broker() throws IOException {
         // Start with no partitions - they'll be created with topics
-        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, 0);
+        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, new BrokerConfig());
     }
 
     @Override
@@ -96,8 +103,9 @@ public class Broker implements Controller {
             }
             this.topicPartitions.put(topicName, newTopicPartitions);
 
-        FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
-        InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
+            FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
+            InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
+        }
         Logger.info("BROKER: Create topics completed successfully.");
     }
 
@@ -258,6 +266,10 @@ public class Broker implements Controller {
         if (!isActiveController) {
             return;
         }
+    }
+
+    public BrokerConfig getConfig() {
+        return config;
     }
 
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
