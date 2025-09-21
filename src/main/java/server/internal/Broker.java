@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import server.internal.HeartbeatSender;
 
 public class Broker implements Controller {
     private String brokerId;
@@ -47,6 +48,9 @@ public class Broker implements Controller {
     private ManagedChannel channel;
     private ShutdownCallback shutdownCallback;
 
+
+    private HeartbeatSender heartbeatSender;
+
     private static final int MAX_REPLICATION_FACTOR = 3;
 
     public Broker(String brokerId, String host, int port, BrokerConfig config) throws IOException {
@@ -57,6 +61,8 @@ public class Broker implements Controller {
         this.topicPartitions = new ConcurrentHashMap<>();
         this.writeManager = new PartitionWriteManager();
         this.config = config != null ? config : new BrokerConfig();
+
+        this.heartbeatSender = new HeartbeatSender(brokerId, host, port, config);
 
         FluxExecutor
                 .getSchedulerService()
@@ -270,6 +276,32 @@ public class Broker implements Controller {
 
     public BrokerConfig getConfig() {
         return config;
+    }
+
+    /**
+     * Start sending heartbeats to the controller
+     * Should only be called if this broker is not the active controller
+     */
+    public void startHeartbeat() {
+        if (!isActiveController && heartbeatSender != null && !controllerEndpoint.isEmpty()) {
+            heartbeatSender.start(controllerEndpoint);
+        }
+    }
+
+    /**
+     * Stop sending heartbeats
+     */
+    public void stopHeartbeat() {
+        if (heartbeatSender != null) {
+            heartbeatSender.stop();
+        }
+    }
+
+    /**
+     * Get the HeartbeatSender instance (for testing purposes)
+     */
+    public HeartbeatSender getHeartbeatSender() {
+        return heartbeatSender;
     }
 
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
