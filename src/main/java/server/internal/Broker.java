@@ -136,6 +136,7 @@ public class Broker implements Controller {
                 @Override
                 public void onSuccess(BrokerRegistrationResult result) {
                     Logger.info(result.getAcknowledgement());
+                    startHeartbeat();
                 }
 
                 @Override
@@ -165,6 +166,7 @@ public class Broker implements Controller {
                 @Override
                 public void onSuccess(DecommissionBrokerResult result) {
                     Logger.info(result.getAcknowledgement());
+                    stopHeartbeat();
                     try {
                         shutdownCallback.stop();
                     } catch (InterruptedException e) {
@@ -188,6 +190,7 @@ public class Broker implements Controller {
     public void triggerManualBrokerShutdown() {
         try {
             Logger.info("Triggering manual broker shutdown.");
+            stopHeartbeat();
             shutdownCallback.stop();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
