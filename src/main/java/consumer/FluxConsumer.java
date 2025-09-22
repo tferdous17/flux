@@ -1,6 +1,7 @@
 package consumer;
 
 import commons.FluxExecutor;
+import commons.IntRange;
 import commons.headers.Headers;
 import consumer.assignors.PartitionAssignor;
 import consumer.assignors.RangeAssignor;
@@ -9,14 +10,12 @@ import consumer.assignors.StickyAssignor;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
+import metadata.InMemoryTopicMetadataRepository;
 import org.tinylog.Logger;
 import proto.*;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.*;
 
 public class FluxConsumer<K, V> implements Consumer {
@@ -53,8 +52,8 @@ public class FluxConsumer<K, V> implements Consumer {
     public void subscribe(Collection<String> topics) {
         this.subscribedTopics = new ArrayList<>(topics);
 
-        String rack = "us-east"; // TODO: Lets keep it EAST for now lol
 
+        //TODO: Figure out how get from members itself.
         List<ProtocolMetadata> protocols = List.of(
                 ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "range"),
                 ProtocolCodec.buildProtocolMetadata(this.subscribedTopics, "roundrobin")
@@ -88,12 +87,12 @@ public class FluxConsumer<K, V> implements Consumer {
 
             // Choose assignor based on negotiated protocol
             PartitionAssignor assignor = selectAssignor(joinResponse.getProtocol());
+
+            // topic -> total partitions registered
             Map<String, Integer> topicToPartitionCount = fetchPartitionCounts(subscribedTopics);
 
-            Map<String, Map<String, List<Integer>>> full =  assignor.assign(memberIds, topicToPartitionCount);
-
             LeaderAssignmentPlanner planner = new LeaderAssignmentPlanner(assignor);
-            Assignment groupBlob = planner.buildGroupAssignment(memberIds, subscribedTopics, fetchPartitionCounts(subscribedTopics));
+            Assignment groupBlob = planner.buildGroupAssignment(memberIds, subscribedTopics, topicToPartitionCount);
 
             // Leader sends the full assignment
             SyncGroupResponse sync = groupCoordinatorServiceBlockingStub.syncGroup( // TODO: Missing SyncGroup.
@@ -188,17 +187,17 @@ public class FluxConsumer<K, V> implements Consumer {
         if (protocol == null) protocol = "range";
         return switch (protocol.toLowerCase()) {
             case "roundrobin" -> new RoundRobinAssignor();
-            case "sticky" -> new StickyAssignor();
+            case "sticky" -> new StickyAssignor(); // TODO: We are still missing implementation.
             default -> new RangeAssignor();
         };
     }
 
-    // TODO: Look into replacement for InMemoryTopicMetadataRepository.
     private Map<String, Integer> fetchPartitionCounts(Collection<String> topics) {
-        Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        Map<String, Integer> counts = new HashMap<>();
         for (String t : topics) {
             if (t != null && !t.isEmpty()) {
-                counts.put(t, 3); // TODO: real value from broker; 3 is a safe mock
+                IntRange ranges = InMemoryTopicMetadataRepository.getInstance().getPartitionIdRangeForTopic(t);
+                counts.put(t, ranges.end() - ranges.start() + 1);
             }
         }
         return counts;

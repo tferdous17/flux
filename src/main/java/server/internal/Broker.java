@@ -95,10 +95,10 @@ public class Broker implements Controller {
                 this.numPartitions++;
             }
             this.topicPartitions.put(topicName, newTopicPartitions);
-
-        FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
-        InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
-        Logger.info("BROKER: Create topics completed successfully.");
+            FluxTopic topic = new FluxTopic(topicName, newTopicPartitions, replicationFactor);
+            InMemoryTopicMetadataRepository.getInstance().addNewTopic(topicName, topic);
+            Logger.info("BROKER: Create topics completed successfully.");
+        }
     }
 
     @Override
