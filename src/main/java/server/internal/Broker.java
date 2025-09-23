@@ -26,7 +26,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import server.internal.HeartbeatSender;
 
 public class Broker implements Controller {
     private String brokerId;
@@ -50,6 +49,7 @@ public class Broker implements Controller {
 
 
     private HeartbeatSender heartbeatSender;
+    private BrokerLivenessTracker livenessTracker;
 
     private static final int MAX_REPLICATION_FACTOR = 3;
 
@@ -63,6 +63,7 @@ public class Broker implements Controller {
         this.config = config != null ? config : new BrokerConfig();
 
         this.heartbeatSender = new HeartbeatSender(brokerId, host, port, config);
+        this.livenessTracker = new BrokerLivenessTracker(config);
 
         FluxExecutor
                 .getSchedulerService()
@@ -271,9 +272,19 @@ public class Broker implements Controller {
     }
 
     @Override
-    public void processBrokerHeartbeat() {
+    public void processBrokerHeartbeat(String brokerId, grpc.HeartbeatRequest request) {
         if (!isActiveController) {
             return;
+        }
+
+        // Record the heartbeat in the liveness tracker
+        if (livenessTracker != null && request != null) {
+            livenessTracker.recordHeartbeat(brokerId, request.getTimestamp(), request.getSequenceNumber());
+
+            // Store load info if present
+            if (request.hasLoadInfo()) {
+                livenessTracker.recordLoadInfo(brokerId, request.getLoadInfo());
+            }
         }
     }
 
@@ -305,6 +316,13 @@ public class Broker implements Controller {
      */
     public HeartbeatSender getHeartbeatSender() {
         return heartbeatSender;
+    }
+
+    /**
+     * Get the BrokerLivenessTracker instance
+     */
+    public BrokerLivenessTracker getLivenessTracker() {
+        return livenessTracker;
     }
 
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
@@ -469,6 +487,12 @@ public class Broker implements Controller {
 
     public void setIsActiveController(boolean isActiveController) {
         this.isActiveController = isActiveController;
+        // Start or stop liveness monitoring based on controller status
+        if (isActiveController && livenessTracker != null) {
+            livenessTracker.startMonitoring();
+        } else if (!isActiveController && livenessTracker != null) {
+            livenessTracker.stopMonitoring();
+        }
     }
 
     public boolean isActiveController() {

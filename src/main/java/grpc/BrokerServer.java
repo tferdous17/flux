@@ -32,6 +32,7 @@ public class BrokerServer {
                 .addService(new MetadataServiceImpl(this.broker))
                 .addService(new ControllerServiceImpl(this.broker))
                 .addService(new GroupCoordinatorServiceImpl(this.broker))
+                .addService(new HeartbeatServiceImpl(this.broker))
                 .build()
                 .start();
 
