@@ -297,9 +297,22 @@ public class Broker implements Controller {
      * Should only be called if this broker is not the active controller
      */
     public void startHeartbeat() {
-        if (!isActiveController && heartbeatSender != null && !controllerEndpoint.isEmpty()) {
-            heartbeatSender.start(controllerEndpoint);
+        if (isActiveController) {
+            Logger.debug("Broker is active controller, not starting heartbeat sender");
+            return;
         }
+
+        if (heartbeatSender == null) {
+            Logger.warn("HeartbeatSender is null, cannot start heartbeat");
+            return;
+        }
+
+        if (controllerEndpoint.isEmpty()) {
+            Logger.warn("Controller endpoint is empty, cannot start heartbeat");
+            return;
+        }
+
+        heartbeatSender.start(controllerEndpoint);
     }
 
     /**

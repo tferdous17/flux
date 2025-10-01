@@ -112,32 +112,14 @@ public class BrokerConfig {
     }
 
     private void validateHeartbeatInterval(long intervalMs) {
-        final long MIN_INTERVAL = 100L; // 100ms minimum
-        final long MAX_INTERVAL = 60000L; // 60 seconds maximum
-
-        if (intervalMs < MIN_INTERVAL || intervalMs > MAX_INTERVAL) {
-            throw new IllegalArgumentException(
-                    "Heartbeat interval must be between " + MIN_INTERVAL + "ms and " + MAX_INTERVAL + "ms");
-        }
+        BrokerConfigValidator.validateRange(intervalMs, 100L, 60000L, "Heartbeat interval", "ms");
     }
 
     private void validateMissedHeartbeatThreshold(int threshold) {
-        final int MIN_THRESHOLD = 1;
-        final int MAX_THRESHOLD = 10;
-
-        if (threshold < MIN_THRESHOLD || threshold > MAX_THRESHOLD) {
-            throw new IllegalArgumentException(
-                    "Missed heartbeat threshold must be between " + MIN_THRESHOLD + " and " + MAX_THRESHOLD);
-        }
+        BrokerConfigValidator.validateRange(threshold, 1, 10, "Missed heartbeat threshold", "");
     }
 
     private void validateHeartbeatTimeout(long timeoutMs) {
-        final long MIN_TIMEOUT = 100L; // 100ms minimum
-        final long MAX_TIMEOUT = 30000L; // 30 seconds maximum
-
-        if (timeoutMs < MIN_TIMEOUT || timeoutMs > MAX_TIMEOUT) {
-            throw new IllegalArgumentException(
-                    "Heartbeat timeout must be between " + MIN_TIMEOUT + "ms and " + MAX_TIMEOUT + "ms");
-        }
+        BrokerConfigValidator.validateRange(timeoutMs, 100L, 30000L, "Heartbeat timeout", "ms");
     }
 }

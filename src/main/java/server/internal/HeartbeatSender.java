@@ -8,7 +8,6 @@ import grpc.BrokerLoadInfo;
 import grpc.HeartbeatRequest;
 import grpc.HeartbeatResponse;
 import grpc.HeartbeatServiceGrpc;
-import io.grpc.Channel;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import org.tinylog.Logger;
