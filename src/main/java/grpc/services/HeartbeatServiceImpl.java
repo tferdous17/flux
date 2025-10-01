@@ -72,7 +72,7 @@ public class HeartbeatServiceImpl extends HeartbeatServiceGrpc.HeartbeatServiceI
      */
     private ControllerDirective determineDirective(String brokerId) {
         // For now, no directives are sent
-        // Future: Check for rebalancing needs, configuration updates, etc.
+        // TODO: Check for rebalancing needs, configuration updates, etc.
         return null;
     }
 
