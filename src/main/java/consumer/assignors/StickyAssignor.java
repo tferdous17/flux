@@ -87,6 +87,6 @@ public class StickyAssignor implements PartitionAssignor {
             List<String> memberIds,
             Map<String, Integer> topicToPartitionCount
     ) {
-        return null;
+        throw new UnsupportedOperationException("StickyAssignor not implemented yet");
     }
 }
