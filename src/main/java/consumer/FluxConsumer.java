@@ -196,8 +196,12 @@ public class FluxConsumer<K, V> implements Consumer {
         Map<String, Integer> counts = new HashMap<>();
         for (String t : topics) {
             if (t != null && !t.isEmpty()) {
-                IntRange ranges = InMemoryTopicMetadataRepository.getInstance().getPartitionIdRangeForTopic(t);
-                counts.put(t, ranges.end() - ranges.start() + 1);
+                try {
+                    IntRange ranges = InMemoryTopicMetadataRepository.getInstance().getPartitionIdRangeForTopic(t);
+                    counts.put(t, ranges.end() - ranges.start() + 1);
+                } catch (IllegalArgumentException e) {
+                    Logger.warn("Topic {} not found: {}", t, e.getMessage());
+                }
             }
         }
         return counts;
