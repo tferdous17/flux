@@ -1,6 +1,6 @@
 package consumer.assignors;
 
-import producer.TopicPartition;
+import commons.TopicPartition;
 
 import java.util.*;
 

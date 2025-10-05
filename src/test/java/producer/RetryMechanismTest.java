@@ -1,10 +1,9 @@
 package producer;
 
+import commons.TopicPartition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import java.util.Properties;
-import java.util.ArrayDeque;
-import java.util.Deque;
 
 import static org.junit.jupiter.api.Assertions.*;
 

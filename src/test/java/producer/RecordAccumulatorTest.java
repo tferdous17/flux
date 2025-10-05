@@ -1,6 +1,7 @@
 package producer;
 
 import commons.CompressionType;
+import commons.TopicPartition;
 import commons.header.Header;
 import commons.headers.Headers;
 import org.junit.jupiter.api.BeforeAll;
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
