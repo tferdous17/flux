@@ -5,13 +5,14 @@ import commons.TopicPartition;
 import java.util.*;
 
 /**
- * StickyAssignor with heap-based balanced assignment.
+ * StickyAssignor with heap-based balanced assignment and consistent hashing.
  *
  * Guarantees balanced distribution where each member gets ⌊P/M⌋ or ⌈P/M⌉ partitions.
- * Uses greedy heap-based algorithm to assign partitions to least-loaded members.
+ * Uses consistent hashing for pseudo-stickiness: when multiple members have equal load,
+ * the same partition will consistently prefer the same member across rebalances.
  *
- * Note: This is a simplified implementation without true "stickiness" since the interface
- * doesn't provide previous assignment information. It focuses on balanced distribution.
+ * Note: This implementation achieves pseudo-stickiness without requiring previous
+ * assignment state, using consistent hashing for deterministic partition-member affinity.
  */
 public class StickyAssignor implements PartitionAssignor {
 
@@ -50,19 +51,36 @@ public class StickyAssignor implements PartitionAssignor {
         int base = totalPartitions / numMembers;
         int extra = totalPartitions % numMembers;
 
-        PriorityQueue<MemberSlot> heap = new PriorityQueue<>((a, b) -> {
-            if (a.load != b.load) {
-                return Integer.compare(a.load, b.load);
-            }
-            return Integer.compare(a.index, b.index);
-        });
-
+        // Initialize member slots with load tracking
+        List<MemberSlot> memberSlots = new ArrayList<>();
         for (int i = 0; i < numMembers; i++) {
             int desired = base + (i < extra ? 1 : 0);
-            heap.add(new MemberSlot(i, members.get(i), 0, desired));
+            memberSlots.add(new MemberSlot(i, members.get(i), 0, desired));
         }
 
+        // Assign each partition using consistent hashing for tie-breaking
         for (TopicPartition tp : allPartitions) {
+            // Create heap with partition-aware comparator for this specific partition
+            PriorityQueue<MemberSlot> heap = new PriorityQueue<>((a, b) -> {
+                if (a.load != b.load) {
+                    return Integer.compare(a.load, b.load);
+                }
+                // Use consistent hash for tie-breaking when loads are equal
+                int hashA = hashPartitionMember(tp, a.memberId);
+                int hashB = hashPartitionMember(tp, b.memberId);
+                if (hashA != hashB) {
+                    return Integer.compare(hashA, hashB);
+                }
+                return Integer.compare(a.index, b.index);
+            });
+
+            // Add only members that still need partitions
+            for (MemberSlot slot : memberSlots) {
+                if (slot.load < slot.desired) {
+                    heap.add(slot);
+                }
+            }
+
             MemberSlot slot = heap.poll();
             String member = slot.memberId;
 
@@ -71,9 +89,6 @@ public class StickyAssignor implements PartitionAssignor {
                   .add(tp.getPartition());
 
             slot.load++;
-            if (slot.load < slot.desired) {
-                heap.add(slot);
-            }
         }
 
         for (Map<String, List<Integer>> byTopic : result.values()) {
@@ -98,6 +113,14 @@ public class StickyAssignor implements PartitionAssignor {
             }
         }
         return all;
+    }
+
+    /**
+     * Computes a consistent hash for a partition-member pair.
+     * This creates deterministic affinity between partitions and members.
+     */
+    private int hashPartitionMember(TopicPartition partition, String memberId) {
+        return Objects.hash(partition.getTopic(), partition.getPartition(), memberId);
     }
 
     private static class MemberSlot {

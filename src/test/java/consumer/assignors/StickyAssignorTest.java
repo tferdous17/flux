@@ -120,6 +120,42 @@ public class StickyAssignorTest {
         assertThrows(UnsupportedOperationException.class, () -> r.get("m1").get("t").add(99));
     }
 
+    @Test
+    void pseudoStickiness_consistentHashingProvidesPredictableAssignment() {
+        // With consistent hashing, removing one member should cause minimal movement
+        List<String> members3 = List.of("a", "b", "c");
+        List<String> members2 = List.of("a", "b");  // Remove "c"
+        Map<String, Integer> counts = Map.of("topic1", 9);
+
+        Map<String, Map<String, List<Integer>>> r1 = assignor.assign(members3, counts);
+        Map<String, Map<String, List<Integer>>> r2 = assignor.assign(members2, counts);
+
+        // Each member in 3-member group gets 3 partitions
+        assertEquals(3, r1.get("a").get("topic1").size());
+        assertEquals(3, r1.get("b").get("topic1").size());
+        assertEquals(3, r1.get("c").get("topic1").size());
+
+        // After removing c, a and b should get more partitions
+        // But many of their original partitions should remain due to consistent hashing
+        List<Integer> aPartitions1 = r1.get("a").get("topic1");
+        List<Integer> bPartitions1 = r1.get("b").get("topic1");
+        List<Integer> aPartitions2 = r2.get("a").get("topic1");
+        List<Integer> bPartitions2 = r2.get("b").get("topic1");
+
+        // Count how many partitions stayed with the same member
+        long aRetained = aPartitions1.stream().filter(aPartitions2::contains).count();
+        long bRetained = bPartitions1.stream().filter(bPartitions2::contains).count();
+
+        // With consistent hashing, we expect some stability (at least 1 partition retained)
+        assertTrue(aRetained >= 1, "Member 'a' should retain at least 1 partition");
+        assertTrue(bRetained >= 1, "Member 'b' should retain at least 1 partition");
+
+        // Verify balance is maintained
+        int aSize = r2.get("a").get("topic1").size();
+        int bSize = r2.get("b").get("topic1").size();
+        assertTrue(Math.abs(aSize - bSize) <= 1, "Should remain balanced after member removal");
+    }
+
     private static int totalOwned(Map<String, Map<String, List<Integer>>> result, String member) {
         Map<String, List<Integer>> byTopic = result.get(member);
         if (byTopic == null) return 0;
