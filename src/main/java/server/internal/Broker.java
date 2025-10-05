@@ -17,6 +17,7 @@ import org.tinylog.Logger;
 import producer.IntermediaryRecord;
 import producer.RecordBatch;
 import proto.*;
+import server.config.BrokerConfig;
 import server.internal.storage.Partition;
 
 import java.io.IOException;
@@ -34,6 +35,7 @@ public class Broker implements Controller {
     private Map<String, List<Partition>> topicPartitions; // Map of topic name to its partitions
     private AtomicInteger roundRobinCounter = new AtomicInteger(0);
     private final PartitionWriteManager writeManager;
+    private final BrokerConfig config;
 
     private boolean isActiveController = false;
     private String clusterId = ""; // that this controller belongs to
@@ -45,28 +47,40 @@ public class Broker implements Controller {
     private ManagedChannel channel;
     private ShutdownCallback shutdownCallback;
 
+
+    private HeartbeatSender heartbeatSender;
+    private BrokerLivenessTracker livenessTracker;
+
     private static final int MAX_REPLICATION_FACTOR = 3;
 
-    public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
+    public Broker(String brokerId, String host, int port, BrokerConfig config) throws IOException {
         this.brokerId = brokerId;
         this.host = host;
         this.port = port;
         this.numPartitions = 0; // Start with 0 partitions, they'll be created with topics
         this.topicPartitions = new ConcurrentHashMap<>();
         this.writeManager = new PartitionWriteManager();
+        this.config = config != null ? config : new BrokerConfig();
+
+        this.heartbeatSender = new HeartbeatSender(brokerId, host, port, config);
+        this.livenessTracker = new BrokerLivenessTracker(config);
 
         FluxExecutor
                 .getSchedulerService()
                 .scheduleWithFixedDelay(this::updateBrokerMetadata, 80, 180, TimeUnit.SECONDS);
     }
 
+    public Broker(String brokerId, String host, int port, int numPartitions) throws IOException {
+        this(brokerId, host, port, new BrokerConfig());
+    }
+
     public Broker(String brokerId, String host, int port) throws IOException {
-        this(brokerId, host, port, 0); // Start with no partitions
+        this(brokerId, host, port, new BrokerConfig());
     }
 
     public Broker() throws IOException {
         // Start with no partitions - they'll be created with topics
-        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, 0);
+        this("BROKER-%d".formatted(Metadata.brokerIdCounter.getAndIncrement()), "localhost", 50051, new BrokerConfig());
     }
 
     @Override
@@ -122,6 +136,7 @@ public class Broker implements Controller {
                 @Override
                 public void onSuccess(BrokerRegistrationResult result) {
                     Logger.info(result.getAcknowledgement());
+                    startHeartbeat();
                 }
 
                 @Override
@@ -151,6 +166,7 @@ public class Broker implements Controller {
                 @Override
                 public void onSuccess(DecommissionBrokerResult result) {
                     Logger.info(result.getAcknowledgement());
+                    stopHeartbeat();
                     try {
                         shutdownCallback.stop();
                     } catch (InterruptedException e) {
@@ -174,6 +190,7 @@ public class Broker implements Controller {
     public void triggerManualBrokerShutdown() {
         try {
             Logger.info("Triggering manual broker shutdown.");
+            stopHeartbeat();
             shutdownCallback.stop();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
@@ -254,10 +271,70 @@ public class Broker implements Controller {
     }
 
     @Override
-    public void processBrokerHeartbeat() {
+    public void processBrokerHeartbeat(String brokerId, grpc.HeartbeatRequest request) {
         if (!isActiveController) {
             return;
         }
+
+        // Record the heartbeat in the liveness tracker
+        if (livenessTracker != null && request != null) {
+            livenessTracker.recordHeartbeat(brokerId, request.getTimestamp(), request.getSequenceNumber());
+
+            // Store load info if present
+            if (request.hasLoadInfo()) {
+                livenessTracker.recordLoadInfo(brokerId, request.getLoadInfo());
+            }
+        }
+    }
+
+    public BrokerConfig getConfig() {
+        return config;
+    }
+
+    /**
+     * Start sending heartbeats to the controller
+     * Should only be called if this broker is not the active controller
+     */
+    public void startHeartbeat() {
+        if (isActiveController) {
+            Logger.debug("Broker is active controller, not starting heartbeat sender");
+            return;
+        }
+
+        if (heartbeatSender == null) {
+            Logger.warn("HeartbeatSender is null, cannot start heartbeat");
+            return;
+        }
+
+        if (controllerEndpoint.isEmpty()) {
+            Logger.warn("Controller endpoint is empty, cannot start heartbeat");
+            return;
+        }
+
+        heartbeatSender.start(controllerEndpoint);
+    }
+
+    /**
+     * Stop sending heartbeats
+     */
+    public void stopHeartbeat() {
+        if (heartbeatSender != null) {
+            heartbeatSender.stop();
+        }
+    }
+
+    /**
+     * Get the HeartbeatSender instance (for testing purposes)
+     */
+    public HeartbeatSender getHeartbeatSender() {
+        return heartbeatSender;
+    }
+
+    /**
+     * Get the BrokerLivenessTracker instance
+     */
+    public BrokerLivenessTracker getLivenessTracker() {
+        return livenessTracker;
     }
 
     private void validateTopicCreation(String topicName, int numPartitions, int replicationFactor) {
@@ -422,6 +499,12 @@ public class Broker implements Controller {
 
     public void setIsActiveController(boolean isActiveController) {
         this.isActiveController = isActiveController;
+        // Start or stop liveness monitoring based on controller status
+        if (isActiveController && livenessTracker != null) {
+            livenessTracker.startMonitoring();
+        } else if (!isActiveController && livenessTracker != null) {
+            livenessTracker.stopMonitoring();
+        }
     }
 
     public boolean isActiveController() {
