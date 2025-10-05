@@ -8,10 +8,10 @@ import java.util.*;
  * StickyAssignor with heap-based balanced assignment and consistent hashing.
  *
  * Guarantees balanced distribution where each member gets ⌊P/M⌋ or ⌈P/M⌉ partitions.
- * Uses consistent hashing for pseudo-stickiness: when multiple members have equal load,
+ * Uses consistent hashing for stickiness: when multiple members have equal load,
  * the same partition will consistently prefer the same member across rebalances.
  *
- * Note: This implementation achieves pseudo-stickiness without requiring previous
+ * Note: This implementation achieves stickiness without requiring previous
  * assignment state, using consistent hashing for deterministic partition-member affinity.
  */
 public class StickyAssignor implements PartitionAssignor {

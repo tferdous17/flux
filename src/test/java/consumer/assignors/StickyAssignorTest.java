@@ -121,7 +121,7 @@ public class StickyAssignorTest {
     }
 
     @Test
-    void pseudoStickiness_consistentHashingProvidesPredictableAssignment() {
+    void stickiness_consistentHashingProvidesPredictableAssignment() {
         // With consistent hashing, removing one member should cause minimal movement
         List<String> members3 = List.of("a", "b", "c");
         List<String> members2 = List.of("a", "b");  // Remove "c"
