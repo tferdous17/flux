@@ -1,6 +1,6 @@
 package producer;
 
-import commons.CompressionType;
+import commons.TopicPartition;
 import commons.utils.PartitionSelector;
 import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
@@ -13,7 +13,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;

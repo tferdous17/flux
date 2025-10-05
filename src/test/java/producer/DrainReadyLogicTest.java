@@ -1,6 +1,7 @@
 package producer;
 
 import commons.CompressionType;
+import commons.TopicPartition;
 import commons.headers.Headers;
 import metadata.Metadata;
 import metadata.snapshots.ClusterSnapshot;

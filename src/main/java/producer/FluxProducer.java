@@ -5,11 +5,10 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.protobuf.ByteString;
 import commons.FluxExecutor;
-import commons.utils.PartitionSelector;
+import commons.TopicPartition;
 import io.grpc.Grpc;
 import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
-import metadata.InMemoryTopicMetadataRepository;
 import metadata.Metadata;
 import metadata.MetadataListener;
 import metadata.snapshots.ClusterSnapshot;
@@ -111,7 +110,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
     private void flushBuffer() {
         try {
             // Get topic-partitions with ready batches
-            List<TopicPartition> readyPartitions = accumulator.ready();
+            List<commons.TopicPartition> readyPartitions = accumulator.ready();
             if (readyPartitions.isEmpty()) {
                 return;
             }
@@ -119,8 +118,8 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             Logger.info("COMMENCING BUFFER FLUSH for {} ready topic-partitions.", readyPartitions.size());
 
             // Group ready partitions by broker
-            Map<String, List<TopicPartition>> partitionsByBroker = new HashMap<>();
-            for (TopicPartition topicPartition : readyPartitions) {
+            Map<String, List<commons.TopicPartition>> partitionsByBroker = new HashMap<>();
+            for (commons.TopicPartition topicPartition : readyPartitions) {
                 String broker = accumulator.getBrokerForPartition(topicPartition);
                 if (broker != null) {
                     partitionsByBroker.computeIfAbsent(broker, k -> new ArrayList<>()).add(topicPartition);
@@ -132,26 +131,26 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
             Logger.info("Grouped {} partitions across {} brokers", readyPartitions.size(), partitionsByBroker.size());
 
             // Send batches to each broker separately
-            for (Map.Entry<String, List<TopicPartition>> brokerEntry : partitionsByBroker.entrySet()) {
+            for (Map.Entry<String, List<commons.TopicPartition>> brokerEntry : partitionsByBroker.entrySet()) {
                 String brokerAddress = brokerEntry.getKey();
-                List<TopicPartition> brokerPartitions = brokerEntry.getValue();
+                List<commons.TopicPartition> brokerPartitions = brokerEntry.getValue();
                 
                 // Drain batches for this specific broker
-                Map<TopicPartition, RecordBatch> drainedBatches = accumulator.drain(brokerAddress, brokerPartitions, config.getMaxRequestSize());
+                Map<commons.TopicPartition, RecordBatch> drainedBatches = accumulator.drain(brokerAddress, brokerPartitions, config.getMaxRequestSize());
                 
                 if (drainedBatches.isEmpty()) {
                     continue;
                 }
 
                 // Track in-flight batches
-                for (TopicPartition topicPartition : drainedBatches.keySet()) {
+                for (commons.TopicPartition topicPartition : drainedBatches.keySet()) {
                     accumulator.incrementInFlight(topicPartition);
                 }
 
                 // Convert batches to records for gRPC request
                 List<proto.Record> records = new ArrayList<>();
-                for (Map.Entry<TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
-                    TopicPartition topicPartition = entry.getKey();
+                for (Map.Entry<commons.TopicPartition, RecordBatch> entry : drainedBatches.entrySet()) {
+                    commons.TopicPartition topicPartition = entry.getKey();
                     RecordBatch batch = entry.getValue();
                     
                     // Get batch data (will be compressed if enabled)
@@ -186,7 +185,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                 ListenableFuture<BrokerToPublisherAck> response = brokerStub.send(request);
                 
                 // Store drained batches for retry handling
-                final Map<TopicPartition, RecordBatch> batchesForRetry = drainedBatches;
+                final Map<commons.TopicPartition, RecordBatch> batchesForRetry = drainedBatches;
                 final String brokerAddr = brokerAddress;
                 
                 Futures.addCallback(response, new FutureCallback<BrokerToPublisherAck>() {
@@ -200,7 +199,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                         );
                         
                         // Decrement in-flight count for successful batches
-                        for (TopicPartition topicPartition : batchesForRetry.keySet()) {
+                        for (commons.TopicPartition topicPartition : batchesForRetry.keySet()) {
                             accumulator.decrementInFlight(topicPartition);
                         }
                         
@@ -213,7 +212,7 @@ public class FluxProducer<K, V> implements Producer, MetadataListener {
                         Logger.error("Failed to send batch to broker " + brokerAddr, t);
                         
                         // Handle retry logic for failed batches
-                        for (Map.Entry<TopicPartition, RecordBatch> entry : batchesForRetry.entrySet()) {
+                        for (Map.Entry<commons.TopicPartition, RecordBatch> entry : batchesForRetry.entrySet()) {
                             TopicPartition topicPartition = entry.getKey();
                             RecordBatch batch = entry.getValue();
                             

@@ -1,6 +1,6 @@
 package producer;
 
-import commons.header.Header;
+import commons.TopicPartition;
 import commons.headers.Headers;
 import commons.utils.PartitionSelector;
 import org.junit.jupiter.api.AfterEach;
