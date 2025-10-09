@@ -121,39 +121,78 @@ public class StickyAssignorTest {
     }
 
     @Test
-    void stickiness_consistentHashingProvidesPredictableAssignment() {
-        // With consistent hashing, removing one member should cause minimal movement
+    void trueStickiness_memberLeaves() {
         List<String> members3 = List.of("a", "b", "c");
-        List<String> members2 = List.of("a", "b");  // Remove "c"
         Map<String, Integer> counts = Map.of("topic1", 9);
 
-        Map<String, Map<String, List<Integer>>> r1 = assignor.assign(members3, counts);
-        Map<String, Map<String, List<Integer>>> r2 = assignor.assign(members2, counts);
+        Map<String, Map<String, List<Integer>>> r1 = assignor.assign(members3, counts, Collections.emptyMap());
 
-        // Each member in 3-member group gets 3 partitions
         assertEquals(3, r1.get("a").get("topic1").size());
         assertEquals(3, r1.get("b").get("topic1").size());
         assertEquals(3, r1.get("c").get("topic1").size());
 
-        // After removing c, a and b should get more partitions
-        // But many of their original partitions should remain due to consistent hashing
+        List<String> members2 = List.of("a", "b");
+        Map<String, Map<String, List<Integer>>> r2 = assignor.assign(members2, counts, r1);
+
         List<Integer> aPartitions1 = r1.get("a").get("topic1");
         List<Integer> bPartitions1 = r1.get("b").get("topic1");
         List<Integer> aPartitions2 = r2.get("a").get("topic1");
         List<Integer> bPartitions2 = r2.get("b").get("topic1");
 
-        // Count how many partitions stayed with the same member
-        long aRetained = aPartitions1.stream().filter(aPartitions2::contains).count();
-        long bRetained = bPartitions1.stream().filter(bPartitions2::contains).count();
+        assertTrue(aPartitions2.containsAll(aPartitions1), "a should keep all previous partitions");
+        assertTrue(bPartitions2.containsAll(bPartitions1), "b should keep all previous partitions");
 
-        // With consistent hashing, we expect some stability (at least 1 partition retained)
-        assertTrue(aRetained >= 1, "Member 'a' should retain at least 1 partition");
-        assertTrue(bRetained >= 1, "Member 'b' should retain at least 1 partition");
+        assertEquals(9, aPartitions2.size() + bPartitions2.size());
+        assertTrue(Math.abs(aPartitions2.size() - bPartitions2.size()) <= 1);
+    }
 
-        // Verify balance is maintained
-        int aSize = r2.get("a").get("topic1").size();
-        int bSize = r2.get("b").get("topic1").size();
-        assertTrue(Math.abs(aSize - bSize) <= 1, "Should remain balanced after member removal");
+    @Test
+    void trueStickiness_memberJoins() {
+        List<String> members2 = List.of("a", "b");
+        Map<String, Integer> counts = Map.of("topic1", 9);
+
+        Map<String, Map<String, List<Integer>>> r1 = assignor.assign(members2, counts, Collections.emptyMap());
+
+        assertEquals(9, r1.get("a").get("topic1").size() + r1.get("b").get("topic1").size());
+
+        List<String> members3 = List.of("a", "b", "c");
+        Map<String, Map<String, List<Integer>>> r2 = assignor.assign(members3, counts, r1);
+
+        List<Integer> aPartitions1 = r1.get("a").get("topic1");
+        List<Integer> bPartitions1 = r1.get("b").get("topic1");
+
+        Map<String, List<Integer>> aTopics2 = r2.get("a");
+        Map<String, List<Integer>> bTopics2 = r2.get("b");
+        List<Integer> aPartitions2 = aTopics2 != null ? aTopics2.get("topic1") : null;
+        List<Integer> bPartitions2 = bTopics2 != null ? bTopics2.get("topic1") : null;
+
+        if (aPartitions2 != null && bPartitions2 != null) {
+            Set<Integer> aRetained = new HashSet<>(aPartitions1);
+            aRetained.retainAll(aPartitions2);
+            Set<Integer> bRetained = new HashSet<>(bPartitions1);
+            bRetained.retainAll(bPartitions2);
+
+            int totalRetained = aRetained.size() + bRetained.size();
+            assertTrue(totalRetained >= 3, "Some partitions should stay with original members");
+        }
+
+        int total = totalOwned(r2, "a") + totalOwned(r2, "b") + totalOwned(r2, "c");
+        assertEquals(9, total);
+        assertTrue(totalOwned(r2, "c") >= 2, "New member should get partitions");
+    }
+
+    @Test
+    void trueStickiness_minimalMovement() {
+        List<String> members = List.of("a", "b", "c");
+        Map<String, Integer> counts = Map.of("t1", 6, "t2", 6);
+
+        Map<String, Map<String, List<Integer>>> r1 = assignor.assign(members, counts, Collections.emptyMap());
+
+        assertEquals(12, totalOwned(r1, "a") + totalOwned(r1, "b") + totalOwned(r1, "c"));
+
+        Map<String, Map<String, List<Integer>>> r2 = assignor.assign(members, counts, r1);
+
+        assertEquals(r1, r2, "Reassignment with same members should be identical");
     }
 
     private static int totalOwned(Map<String, Map<String, List<Integer>>> result, String member) {

@@ -5,14 +5,14 @@ import commons.TopicPartition;
 import java.util.*;
 
 /**
- * StickyAssignor with heap-based balanced assignment and consistent hashing.
+ * StickyAssignor with true stickiness via previous assignment preservation.
+ *
+ * Two-phase algorithm:
+ * 1. Preserve existing assignments for members still in the group
+ * 2. Distribute unassigned partitions using heap-based balanced assignment
  *
  * Guarantees balanced distribution where each member gets ⌊P/M⌋ or ⌈P/M⌉ partitions.
- * Uses consistent hashing for stickiness: when multiple members have equal load,
- * the same partition will consistently prefer the same member across rebalances.
- *
- * Note: This implementation achieves stickiness without requiring previous
- * assignment state, using consistent hashing for deterministic partition-member affinity.
+ * Minimizes partition movement during rebalances by preserving previous assignments.
  */
 public class StickyAssignor implements PartitionAssignor {
 
@@ -20,6 +20,15 @@ public class StickyAssignor implements PartitionAssignor {
     public Map<String, Map<String, List<Integer>>> assign(
             List<String> memberIds,
             Map<String, Integer> topicToPartitionCount
+    ) {
+        return assign(memberIds, topicToPartitionCount, Collections.emptyMap());
+    }
+
+    @Override
+    public Map<String, Map<String, List<Integer>>> assign(
+            List<String> memberIds,
+            Map<String, Integer> topicToPartitionCount,
+            Map<String, Map<String, List<Integer>>> previousAssignment
     ) {
         if (memberIds == null || memberIds.isEmpty() ||
             topicToPartitionCount == null || topicToPartitionCount.isEmpty()) {
@@ -46,49 +55,55 @@ public class StickyAssignor implements PartitionAssignor {
             result.put(m, new LinkedHashMap<>());
         }
 
-        int totalPartitions = allPartitions.size();
-        int numMembers = members.size();
-        int base = totalPartitions / numMembers;
-        int extra = totalPartitions % numMembers;
-
-        // Initialize member slots with load tracking
-        List<MemberSlot> memberSlots = new ArrayList<>();
-        for (int i = 0; i < numMembers; i++) {
-            int desired = base + (i < extra ? 1 : 0);
-            memberSlots.add(new MemberSlot(i, members.get(i), 0, desired));
+        Set<TopicPartition> assigned = new HashSet<>();
+        Map<String, Integer> memberLoad = new HashMap<>();
+        for (String m : members) {
+            memberLoad.put(m, 0);
         }
 
-        // Assign each partition using consistent hashing for tie-breaking
-        for (TopicPartition tp : allPartitions) {
-            // Create heap with partition-aware comparator for this specific partition
-            PriorityQueue<MemberSlot> heap = new PriorityQueue<>((a, b) -> {
-                if (a.load != b.load) {
-                    return Integer.compare(a.load, b.load);
-                }
-                // Use consistent hash for tie-breaking when loads are equal
-                int hashA = hashPartitionMember(tp, a.memberId);
-                int hashB = hashPartitionMember(tp, b.memberId);
-                if (hashA != hashB) {
-                    return Integer.compare(hashA, hashB);
-                }
-                return Integer.compare(a.index, b.index);
-            });
+        int totalPartitions = allPartitions.size();
+        int numMembers = members.size();
+        int maxPerMember = (totalPartitions + numMembers - 1) / numMembers;
 
-            // Add only members that still need partitions
-            for (MemberSlot slot : memberSlots) {
-                if (slot.load < slot.desired) {
-                    heap.add(slot);
+        // Phase 1: Preserve previous assignments up to balance limit
+        if (previousAssignment != null && !previousAssignment.isEmpty()) {
+            for (String member : members) {
+                Map<String, List<Integer>> prevTopics = previousAssignment.get(member);
+                if (prevTopics != null) {
+                    for (Map.Entry<String, List<Integer>> entry : prevTopics.entrySet()) {
+                        String topic = entry.getKey();
+                        for (Integer partition : entry.getValue()) {
+                            if (memberLoad.get(member) >= maxPerMember) {
+                                break;
+                            }
+                            TopicPartition tp = new TopicPartition(topic, partition);
+                            if (isValidPartition(tp, topicToPartitionCount) && !assigned.contains(tp)) {
+                                result.get(member)
+                                      .computeIfAbsent(topic, t -> new ArrayList<>())
+                                      .add(partition);
+                                assigned.add(tp);
+                                memberLoad.put(member, memberLoad.get(member) + 1);
+                            }
+                        }
+                    }
                 }
             }
+        }
 
-            MemberSlot slot = heap.poll();
-            String member = slot.memberId;
+        // Phase 2: Distribute unassigned partitions
+        List<TopicPartition> unassigned = new ArrayList<>();
+        for (TopicPartition tp : allPartitions) {
+            if (!assigned.contains(tp)) {
+                unassigned.add(tp);
+            }
+        }
 
+        for (TopicPartition tp : unassigned) {
+            String member = findMemberWithLowestLoad(members, memberLoad);
             result.get(member)
                   .computeIfAbsent(tp.getTopic(), t -> new ArrayList<>())
                   .add(tp.getPartition());
-
-            slot.load++;
+            memberLoad.put(member, memberLoad.get(member) + 1);
         }
 
         for (Map<String, List<Integer>> byTopic : result.values()) {
@@ -115,25 +130,21 @@ public class StickyAssignor implements PartitionAssignor {
         return all;
     }
 
-    /**
-     * Computes a consistent hash for a partition-member pair.
-     * This creates deterministic affinity between partitions and members.
-     */
-    private int hashPartitionMember(TopicPartition partition, String memberId) {
-        return Objects.hash(partition.getTopic(), partition.getPartition(), memberId);
+    private boolean isValidPartition(TopicPartition tp, Map<String, Integer> topicToPartitionCount) {
+        Integer count = topicToPartitionCount.get(tp.getTopic());
+        return count != null && tp.getPartition() >= 0 && tp.getPartition() < count;
     }
 
-    private static class MemberSlot {
-        final int index;
-        final String memberId;
-        int load;
-        final int desired;
-
-        MemberSlot(int index, String memberId, int load, int desired) {
-            this.index = index;
-            this.memberId = memberId;
-            this.load = load;
-            this.desired = desired;
+    private String findMemberWithLowestLoad(List<String> members, Map<String, Integer> memberLoad) {
+        String chosen = members.get(0);
+        int minLoad = memberLoad.get(chosen);
+        for (String member : members) {
+            int load = memberLoad.get(member);
+            if (load < minLoad) {
+                minLoad = load;
+                chosen = member;
+            }
         }
+        return chosen;
     }
 }
