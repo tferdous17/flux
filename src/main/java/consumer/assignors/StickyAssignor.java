@@ -9,12 +9,34 @@ import java.util.*;
  *
  * Two-phase algorithm:
  * 1. Preserve existing assignments for members still in the group
- * 2. Distribute unassigned partitions using heap-based balanced assignment
+ * 2. Distribute unassigned partitions using min-heap for O(U log M) balanced assignment
+ *    where U = unassigned partitions, M = members
  *
  * Guarantees balanced distribution where each member gets ⌊P/M⌋ or ⌈P/M⌉ partitions.
  * Minimizes partition movement during rebalances by preserving previous assignments.
  */
 public class StickyAssignor implements PartitionAssignor {
+
+    /**
+     * Tracks a member's current partition load for heap-based load balancing.
+     * Ordered by load (ascending), then member ID (alphabetically) for deterministic assignment.
+     */
+    private static class MemberLoad implements Comparable<MemberLoad> {
+        String memberId;
+        int load;
+
+        MemberLoad(String memberId, int load) {
+            this.memberId = memberId;
+            this.load = load;
+        }
+
+        @Override
+        public int compareTo(MemberLoad other) {
+            int cmp = Integer.compare(this.load, other.load);
+            if (cmp != 0) return cmp;
+            return this.memberId.compareTo(other.memberId);
+        }
+    }
 
     @Override
     public Map<String, Map<String, List<Integer>>> assign(
@@ -90,7 +112,12 @@ public class StickyAssignor implements PartitionAssignor {
             }
         }
 
-        // Phase 2: Distribute unassigned partitions
+        // Phase 2: Distribute unassigned partitions using min-heap
+        PriorityQueue<MemberLoad> heap = new PriorityQueue<>();
+        for (String member : members) {
+            heap.offer(new MemberLoad(member, memberLoad.get(member)));
+        }
+
         List<TopicPartition> unassigned = new ArrayList<>();
         for (TopicPartition tp : allPartitions) {
             if (!assigned.contains(tp)) {
@@ -99,11 +126,12 @@ public class StickyAssignor implements PartitionAssignor {
         }
 
         for (TopicPartition tp : unassigned) {
-            String member = findMemberWithLowestLoad(members, memberLoad);
-            result.get(member)
+            MemberLoad memberWithLeastLoad = heap.poll();
+            result.get(memberWithLeastLoad.memberId)
                   .computeIfAbsent(tp.getTopic(), t -> new ArrayList<>())
                   .add(tp.getPartition());
-            memberLoad.put(member, memberLoad.get(member) + 1);
+            memberWithLeastLoad.load++;
+            heap.offer(memberWithLeastLoad);
         }
 
         for (Map<String, List<Integer>> byTopic : result.values()) {
@@ -133,18 +161,5 @@ public class StickyAssignor implements PartitionAssignor {
     private boolean isValidPartition(TopicPartition tp, Map<String, Integer> topicToPartitionCount) {
         Integer count = topicToPartitionCount.get(tp.getTopic());
         return count != null && tp.getPartition() >= 0 && tp.getPartition() < count;
-    }
-
-    private String findMemberWithLowestLoad(List<String> members, Map<String, Integer> memberLoad) {
-        String chosen = members.get(0);
-        int minLoad = memberLoad.get(chosen);
-        for (String member : members) {
-            int load = memberLoad.get(member);
-            if (load < minLoad) {
-                minLoad = load;
-                chosen = member;
-            }
-        }
-        return chosen;
     }
 }
