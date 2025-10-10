@@ -121,7 +121,7 @@ public class StickyAssignorTest {
     }
 
     @Test
-    void trueStickiness_memberLeaves() {
+    void stickiness_memberLeaves() {
         List<String> members3 = List.of("a", "b", "c");
         Map<String, Integer> counts = Map.of("topic1", 9);
 
@@ -147,7 +147,7 @@ public class StickyAssignorTest {
     }
 
     @Test
-    void trueStickiness_memberJoins() {
+    void stickiness_memberJoins() {
         List<String> members2 = List.of("a", "b");
         Map<String, Integer> counts = Map.of("topic1", 9);
 
@@ -182,7 +182,7 @@ public class StickyAssignorTest {
     }
 
     @Test
-    void trueStickiness_minimalMovement() {
+    void stickiness_minimalMovement() {
         List<String> members = List.of("a", "b", "c");
         Map<String, Integer> counts = Map.of("t1", 6, "t2", 6);
 
