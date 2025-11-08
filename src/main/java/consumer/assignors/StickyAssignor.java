@@ -1,92 +1,165 @@
 package consumer.assignors;
 
+import commons.TopicPartition;
+
 import java.util.*;
 
-
-// TODO: Worthwhile to make into its own story for later. Just becuz future research is needed.
-// TODO: I will document what I found however
-/*
-    This is the HIGH LEVEL algo/steps from good mutually agreed from both LLMs and Youtube Confluent.
-
-    GOALS:
-        1) Balanced: total partitions are split so each member has either ⌊P/M⌋ or ⌈P/M⌉.
-        2) Sticky: keep as many prior placements as possible; move only what’s necessary to reach (1).
-         Deterministic: same inputs → same output.
-
-    Data Structures:
-          - taken: HashSet<TopicPartition> of partitions already kept/assigned (prevents duplicates).
-          - unassigned: ArrayDeque<TopicPartition> (FIFO) holding partitions that must be (re)assigned.
-          - result: Map<memberId, Map<topic, List<Integer>>> accumulating the plan.
-          - desired[]: int[M] target load per member (balanced totals).
-          - load[]:    int[M] current load per member after “keep” step.
-          - pq: PriorityQueue<MemberSlot> — a min-heap ordered by (load ASC, memberIndex ASC).
-          -  MemberSlot { index:int, load:int, desired:int }.
-
-   STEPS:
-           0) Normalize for determinism:
-                - Sort memberIds; sort topics.
-
-             1) Build the partition universe:
-                - allPartitions := sorted list of every (topic, partitionId) that exists now.
-
-             2) Compute balanced targets:
-                - total P = allPartitions.size(), members M = memberIds.size()
-                - base = P / M, extra = P % M
-                - desired[i] = base + (i < extra ? 1 : 0)  // first ‘extra’ members get one more
-
-             3) Keep valid previous assignments (stickiness pass):
-                - For each member in sorted order:
-                    For each (topic -> partitions) previously owned:
-                      For each partition p:
-                        If topic still exists AND 0 <= p < topicPartitionCount[topic]
-                        AND (topic,p) not in taken:
-                          - Append p to result[member][topic], mark taken.add((topic,p)).
-                - This preserves as much prior placement as possible without violating current realities.
-
-             4) Measure current load & collect unassigned:
-                - load[i] = sum of partitions already in result for member i.
-                - unassigned = every (topic,partition) in allPartitions that is NOT in taken.
-
-             5) Evict from overfull members (to achieve balance with minimal churn):
-                - For each member i:
-                    over = load[i] - desired[i]
-                    If over > 0:
-                      - Gather that member’s owned TopicPartitions (flatten & sort deterministically).
-                      - Remove ‘over’ partitions from the END (highest (topic,partition) first) to be victims.
-                      - For each victim:
-                          * Remove from result[member]
-                          * taken.remove(victim)
-                          * unassigned.addLast(victim)
-                          * load[i]--
-                - Eviction is deterministic and limited to what’s strictly necessary.
-
-             6) Fill underfull members using a MIN-HEAP (the “heap” part):
-                - Initialize pq with MemberSlot(i, load[i], desired[i]) for any i where load[i] < desired[i].
-                - While unassigned not empty AND pq not empty:
-                    tp = unassigned.pollFirst()         // pick next unassigned partition in stable order
-                    ms = pq.poll()                      // pop least-loaded member (min-heap by load, then index)
-                    assign tp to memberIds[ms.index]    // result[member][tp.topic].add(tp.partition)
-                    ms.load++
-                    If ms.load < ms.desired:
-                       pq.add(ms)                       // still needs more; push back with updated load
-                - The min-heap ensures each partition goes to the *currently* least-loaded member,
-                  guaranteeing balance while minimizing further movement.
-
-             7) Canonicalize & freeze:
-                - Sort each member’s per-topic partition lists; optionally wrap them unmodifiable.
-
-         Edge Cases:
-          - No members or no partitions → empty assignment map.
-          - More members than partitions → some members end at 0 (desired[i] may be 0).
-          - Topic shrinks or disappears → invalid prior partitions are ignored automatically in step 3.
+/**
+ * StickyAssignor with true stickiness via previous assignment preservation.
+ *
+ * Two-phase algorithm:
+ * 1. Preserve existing assignments for members still in the group
+ * 2. Distribute unassigned partitions using min-heap for O(U log M) balanced assignment
+ *    where U = unassigned partitions, M = members
+ *
+ * Guarantees balanced distribution where each member gets ⌊P/M⌋ or ⌈P/M⌉ partitions.
+ * Minimizes partition movement during rebalances by preserving previous assignments.
  */
-
 public class StickyAssignor implements PartitionAssignor {
+
+    /**
+     * Tracks a member's current partition load for heap-based load balancing.
+     * Ordered by load (ascending), then member ID (alphabetically) for deterministic assignment.
+     */
+    private static class MemberLoad implements Comparable<MemberLoad> {
+        String memberId;
+        int load;
+
+        MemberLoad(String memberId, int load) {
+            this.memberId = memberId;
+            this.load = load;
+        }
+
+        @Override
+        public int compareTo(MemberLoad other) {
+            int cmp = Integer.compare(this.load, other.load);
+            if (cmp != 0) return cmp;
+            return this.memberId.compareTo(other.memberId);
+        }
+    }
+
     @Override
     public Map<String, Map<String, List<Integer>>> assign(
             List<String> memberIds,
             Map<String, Integer> topicToPartitionCount
     ) {
-        throw new UnsupportedOperationException("StickyAssignor not implemented yet");
+        return assign(memberIds, topicToPartitionCount, Collections.emptyMap());
+    }
+
+    @Override
+    public Map<String, Map<String, List<Integer>>> assign(
+            List<String> memberIds,
+            Map<String, Integer> topicToPartitionCount,
+            Map<String, Map<String, List<Integer>>> previousAssignment
+    ) {
+        if (memberIds == null || memberIds.isEmpty() ||
+            topicToPartitionCount == null || topicToPartitionCount.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<String> members = new ArrayList<>(memberIds);
+        List<String> topics = new ArrayList<>(topicToPartitionCount.keySet());
+        Collections.sort(members);
+        Collections.sort(topics);
+
+        List<TopicPartition> allPartitions = buildPartitionUniverse(topics, topicToPartitionCount);
+
+        if (allPartitions.isEmpty()) {
+            Map<String, Map<String, List<Integer>>> empty = new LinkedHashMap<>();
+            for (String m : members) {
+                empty.put(m, Collections.emptyMap());
+            }
+            return empty;
+        }
+
+        Map<String, Map<String, List<Integer>>> result = new LinkedHashMap<>();
+        for (String m : members) {
+            result.put(m, new LinkedHashMap<>());
+        }
+
+        Set<TopicPartition> assigned = new HashSet<>();
+        Map<String, Integer> memberLoad = new HashMap<>();
+        for (String m : members) {
+            memberLoad.put(m, 0);
+        }
+
+        int totalPartitions = allPartitions.size();
+        int numMembers = members.size();
+        int maxPerMember = (totalPartitions + numMembers - 1) / numMembers;
+
+        // Phase 1: Preserve previous assignments up to balance limit
+        if (previousAssignment != null && !previousAssignment.isEmpty()) {
+            for (String member : members) {
+                Map<String, List<Integer>> prevTopics = previousAssignment.get(member);
+                if (prevTopics != null) {
+                    for (Map.Entry<String, List<Integer>> entry : prevTopics.entrySet()) {
+                        String topic = entry.getKey();
+                        for (Integer partition : entry.getValue()) {
+                            if (memberLoad.get(member) >= maxPerMember) {
+                                break;
+                            }
+                            TopicPartition tp = new TopicPartition(topic, partition);
+                            if (isValidPartition(tp, topicToPartitionCount) && !assigned.contains(tp)) {
+                                result.get(member)
+                                      .computeIfAbsent(topic, t -> new ArrayList<>())
+                                      .add(partition);
+                                assigned.add(tp);
+                                memberLoad.put(member, memberLoad.get(member) + 1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Distribute unassigned partitions using min-heap
+        PriorityQueue<MemberLoad> heap = new PriorityQueue<>();
+        for (String member : members) {
+            heap.offer(new MemberLoad(member, memberLoad.get(member)));
+        }
+
+        List<TopicPartition> unassigned = new ArrayList<>();
+        for (TopicPartition tp : allPartitions) {
+            if (!assigned.contains(tp)) {
+                unassigned.add(tp);
+            }
+        }
+
+        for (TopicPartition tp : unassigned) {
+            MemberLoad memberWithLeastLoad = heap.poll();
+            result.get(memberWithLeastLoad.memberId)
+                  .computeIfAbsent(tp.getTopic(), t -> new ArrayList<>())
+                  .add(tp.getPartition());
+            memberWithLeastLoad.load++;
+            heap.offer(memberWithLeastLoad);
+        }
+
+        for (Map<String, List<Integer>> byTopic : result.values()) {
+            for (Map.Entry<String, List<Integer>> e : byTopic.entrySet()) {
+                Collections.sort(e.getValue());
+                e.setValue(Collections.unmodifiableList(e.getValue()));
+            }
+        }
+
+        return result;
+    }
+
+    private List<TopicPartition> buildPartitionUniverse(
+            List<String> topics,
+            Map<String, Integer> topicToPartitionCount
+    ) {
+        List<TopicPartition> all = new ArrayList<>();
+        for (String topic : topics) {
+            int count = topicToPartitionCount.getOrDefault(topic, 0);
+            for (int p = 0; p < count; p++) {
+                all.add(new TopicPartition(topic, p));
+            }
+        }
+        return all;
+    }
+
+    private boolean isValidPartition(TopicPartition tp, Map<String, Integer> topicToPartitionCount) {
+        Integer count = topicToPartitionCount.get(tp.getTopic());
+        return count != null && tp.getPartition() >= 0 && tp.getPartition() < count;
     }
 }
