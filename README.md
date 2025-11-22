@@ -1,7 +1,122 @@
-# FLUX
+# flux
 
-### A work-in-progress distributed event streaming and message queue platform engineered for high throughput, maximal scalability, and fault-tolerance.
-(aka an Apache Kafka clone)
+_Last Updated: 11/22/25_
+
+**Table of Contents**
+1. [About](#about)
+2. [Contributors](#contributors)
+3. [Architecture](#architecture)
+   1. [Quick Terminology](#quick-terminology)
+   2. [High Level Visual Overview (Simplified)](#high-level-visual-overview-simplified)
+   3. [Cluster Architecture](#1-cluster-architecture)
+   4. [Controller Node](#2-controller)
+   5. [Metadata Infrastructure](#3-metadata-infrastructure)
+5. [References](#references)
+6. [Internal Documentation](#internal-documentation)
+
+# About
+flux is a heavily Kafka-inspired distributed message queue platform engineered for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
+
+> [!NOTE]
+> **Disclaimer**: this is an amateur distributed systems project so no, our code is not industry standard lol and yes there is undoubtedly room for improvement
+
+# Contributors
+[Tasnim Ferdous](https://github.com/tferdous17)
+- Project Lead, architected the end-to-end infrastructure for flux. Designed and implemented the Broker, controller-node infrastructure, cluster membership, and broker registration/decommissioning workflows; developed major subsystems such as metadata propagation, topic creation (+ partition-to-broker assignments for scalability), admin APIs, and initial producer infrastructure. Implemented underlying log-storage components including Partition, Log, LogSegment (immutable, append-only log file), and durable disk writes. Designed gRPC communication flows between producers, brokers, and consumers, along with record offset-management.
+
+[Kyoshi Noda](https://github.com/KyoshiNoda)
+- Led implementation of the entire Consumer infrastructure & Consumer Group functionality including group coordination, partition-to-consumer assignments, synchronization, and liveness tracking. Additionally implemented deterministic round robin and range assignors for partition assignments. Laid the groundwork for ProducerRecords + RecordAccumulator, and implemented Kryo-based serialization for incoming producer messages.
+
+[Kevin Wijaya](https://github.com/icycoldveins)
+- Led implementation of multi-partition support, multi-producer writing to brokers (parallelized & thread-safe), broker liveness tracking, sticky assignor implementation (consumer groups), and implemented batching, compression, retry logic, and partition starvation prevention in RecordAccumulator.
+
+[Christopher Maradiaga](https://github.com/maradC)
+- Built out the foundation for the Partition class and per-message metadata.
+
+[Carlos Duque](https://github.com/CDDR1)
+- Built out the foundation for Consumer records and unit testing.
+
+[Josh Obogbaimhe](https://github.com/J-Obog)
+- Contribtued mentorship and PR reviews.
+
+# Architecture
+Overview of the end-to-end architecture covering the Producer, Broker, and Consumer.
+
+## Quick Terminology
+### Producer
+- A Producer is simply a server/process/application that **sends** data into our system. An example producer can be Youtube, pushing videos/video chunks to a queue in order for it to be consumed later by a post-processing service.
+
+### Consumer
+- A Consumer is simply a server/process/application that **reads** data from our system (via a pull-based model). An example would be the aforementioned post-processing service (or worker nodes) which consume from the queue.
+
+### Broker
+- The Broker is the core storage mechanism/queue that holds data. This is what producers and consumers are communicating with to send/read data, and is really a bunch of subcomponents built on top of each other.
+
+### Partition
+- Partitions are the underlying storage mechanism of Brokers (our "queue") and are really just immutable, append-only log files. This is where data really gets produced to/consumed from. Partitions are technically made up of other subcomponents such as logs and log segments.
+
+### Topic
+- Topics are just logical groupings of partitions (and by extension, messages). To continue with the earlier example, a potentional topic could be "Video Post Processing" and _only_ contains partitions related to storing videos to be consumed later by a post-processing service.
+
+
+## High-Level Visual Overview (Simplified)
+Here is a high level overview of how Kafka works (which flux is modeled after). This abstracts away aspects such as metadata propagation, controllers, multiple producers/consumers, multiple brokers, multiple partitions, etc, for the sake of simplicity but will get explained later.
+<img width="3758" height="1552" alt="image" src="https://github.com/user-attachments/assets/6cf430fa-ea6e-45d5-b51c-9375d476df00" />
+
+This is what flux originally started as--just a single-server model which gradually got built upon until it became fully distributed. 
+
+**The following sections dive deeper into the full architecture of the system—from the initial single-node prototype to the fully distributed design. We walk through each major component of the cluster, explain how they interact, and detail the design decisions behind metadata management, storage, networking, and client behavior.**
+
+> [!NOTE]
+> This is how *our* system implements the components. While we tried to mirror Kafka as much as we could, there are some aspects where we deviated for sake of simplicity and quicker development.
+
+For a logical ordering, the sections will be explored in the following manner:
+1. Cluster Architecture
+2. Controller Node
+3. Metadata Infrastructure
+4. Broker Node
+5. Storage Layer
+6. Networking (gRPC)
+7. Producer Architecture
+8. Consumer Architecture
+
+## 1. Cluster Architecture
+A cluster is thin layer that groups of Brokers together, and in a way serves as a single point of entry to a set of Brokers. 
+
+In flux, we initialize a cluster programatically via a bootstrap function that takes in a set of server addresses as a paramater (ex: `"localhost:50051, localhost:50052, ..."`) and creates a `Broker` instance hosted on the given addresses. By default, our system picks the first address given to us and designates the corresponding Broker hosted on that address as the active `Controller` for the cluster (more detail later).
+
+Starting the cluster is separate from bootstrapping it--which we also do programatically. Upon starting a cluster, we first fire up the Controller node and then have all the other brokers in this cluster asynchronously register themselves with the controller via network requests and initialize their metadata as necessary. Broker registration (and decomissioning) is necessary as this is how the controller can track the active brokers its responsible for within a cluster and can perform certain actions such as metadata propagation more easily.
+
+You can check out our Cluster code [here](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Cluster.java)
+
+## 2. Controller
+The Controller broker is a specially designated broker within a cluster that acts like the "leader" of the cluster. It has the same functionality as every other broker, except it comes with additional functionality on top of it to handle special responsibilities which include:
+- Maintaining and updating cluster metadata- Propagating metadata changes to all brokers within the cluster via RPCs
+- Handling topic lifestyle (add or remove partitions + distribute them upon receiving topic requests by admin)
+- Reassigning partitions for load balancing and scalability
+- Monitor broker heartbeats/liveness
+- Handle broker registration (new brokers joining) and broker decommissioning (brokers gracefully shutting down)
+- ..and much more that we didn't include
+
+As of the latest update, most of the above responsibilities have been implemented in flux and you can check out the [implementations](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Broker.java), and below is a quick diagram.
+<img width="1200" height="700" alt="image" src="https://github.com/user-attachments/assets/7f5b96c2-6989-415d-b948-f37184174da0" />
+
+## 3. Metadata Infrastructure
+The Metadata API is a core subsystem in flux that all major components depend on, and allows such components to periodically fetch and use the latest metadata within the system.
+
+We implemented Metadata as a singleton object that encapsulates all the logic surrounding metadata and we specifically utilized the Observer design pattern, thus allowing clients (producers/consumers) to listen (`MetadataListener`) to our `Metadata` instance and receive the latest cached snapshot of metadata immediately upon any changes detected in the metadata (which itself periodically updates in scheduled intervals).
+
+To be more specific about *what* metadata we handle, each component related to brokers and clusters have their own dedicated, immutable metadata records (ex: `ControllerMetadata`, `BrokerMetadata`, `PartitionMetadata`, etc) and are all contained within a `ClusterSnapshot` record which is what the Metadata instance periodically fetches from a cluster's `Controller` (pull-based). We set our default fetch interval to be 5 minutes however you may see in our codebase a much shorter interval for testing puroses. In order for the Controller to have the latest metadata for all of it's brokers, each broker in a cluster will periodically send its most up-to-date metadata to the controller via RPCs.
+
+Some important usecases of metadata include:
+- Producers must know how many partitions a broker has for the sake of partition selection for a particular message (more detail later)
+- Controllers must know the details of their brokers in order to do partition assignment via topic creation
+- Topic metadata is necessary so we know its # of partitions and per-partition metadata
+- etc..
+
+See the code [here](https://github.com/tferdous17/flux/tree/main/src/main/java/metadata) and check out the below diagram for a visual overview.
+<img width="2954" height="984" alt="image" src="https://github.com/user-attachments/assets/15283044-2015-46a1-a039-beabecd6d774" />
+
 
 # Internal Documentation
 
