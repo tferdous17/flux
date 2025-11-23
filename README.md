@@ -1,6 +1,6 @@
 # flux
 
-_Last Updated: 11/22/25_
+_Last Updated: 11/23/25_
 
 **Table of Contents**
 1. [About](#about)
@@ -11,6 +11,9 @@ _Last Updated: 11/22/25_
    3. [Cluster Architecture](#1-cluster-architecture)
    4. [Controller Node](#2-controller)
    5. [Metadata Infrastructure](#3-metadata-infrastructure)
+   6. [Broker Node](#4-broker-node)
+   7. [Storage Layer](#5-storage-layer)
+   8. [Networking (gRPC)](#6-networking-grpc)
 5. [References](#references)
 6. [Internal Documentation](#internal-documentation)
 
@@ -83,7 +86,7 @@ For a logical ordering, the sections will be explored in the following manner:
 ## 1. Cluster Architecture
 A cluster is thin layer that groups of Brokers together, and in a way serves as a single point of entry to a set of Brokers. 
 
-In flux, we initialize a cluster programatically via a bootstrap function that takes in a set of server addresses as a paramater (ex: `"localhost:50051, localhost:50052, ..."`) and creates a `Broker` instance hosted on the given addresses. By default, our system picks the first address given to us and designates the corresponding Broker hosted on that address as the active `Controller` for the cluster (more detail later).
+In flux, we initialize a cluster programatically via a bootstrap function that takes in a set of server addresses as a paramater (ex: `"localhost:50051, localhost:50052, ..."`) and creates a new `Broker` instance per given address. By default, our system picks the first address given to us and designates the corresponding Broker hosted on that address as the active `Controller` for the cluster (more detail later).
 
 Starting the cluster is separate from bootstrapping it--which we also do programatically. Upon starting a cluster, we first fire up the Controller node and then have all the other brokers in this cluster asynchronously register themselves with the controller via network requests and initialize their metadata as necessary. Broker registration (and decomissioning) is necessary as this is how the controller can track the active brokers its responsible for within a cluster and can perform certain actions such as metadata propagation more easily.
 
@@ -99,7 +102,7 @@ The Controller broker is a specially designated broker within a cluster that act
 - ..and much more that we didn't include
 
 As of the latest update, most of the above responsibilities have been implemented in flux and you can check out the [implementations](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Broker.java), and below is a quick diagram.
-<img width="1200" height="700" alt="image" src="https://github.com/user-attachments/assets/7f5b96c2-6989-415d-b948-f37184174da0" />
+<img width="900" height="700" alt="image" src="https://github.com/user-attachments/assets/7f5b96c2-6989-415d-b948-f37184174da0" />
 
 ## 3. Metadata Infrastructure
 The Metadata API is a core subsystem in flux that all major components depend on, and allows such components to periodically fetch and use the latest metadata within the system.
@@ -116,6 +119,70 @@ Some important usecases of metadata include:
 
 See the code [here](https://github.com/tferdous17/flux/tree/main/src/main/java/metadata) and check out the below diagram for a visual overview.
 <img width="2954" height="984" alt="image" src="https://github.com/user-attachments/assets/15283044-2015-46a1-a039-beabecd6d774" />
+
+## 4. Broker Node
+Broker nodes are the primary servers that producers and consumers interact with. Each broker stores partitions (and their replicas), validates incoming writes, and serves read requests.
+
+**Controller Capability** <br>
+A broker can optionally act as the Controller (the cluster leader). We implemented this through a shared Controller interface that every broker implements. Controller-specific behavior is gated behind an internal flag (isActiveController). When the broker is not the active controller, controller-specific functionality is simply disabled.
+ ```java
+   public class Broker implements Controller {
+       // ...
+       private boolean isActiveController = false | true
+       // ...
+   }
+   ```
+**General Responsibilities**<br>
+Write path (Producer → Broker → Storage):
+- Validates incoming messages from producers.
+- Appends messages to the underlying partitions + delegates further write handling to them.
+
+Read path (Consumer → Broker):
+- Serves fetch requests based on the starting offset given by consumers.
+- Determines the target partition based on the request, reads from it, and returns the message back to the consumer.
+
+**Networking (gRPC)** <br>
+Each broker runs an embedded gRPC server to handle external requests. Brokers can also act as gRPC clients when sending metadata updates to the Controller node or communicating with other brokers.
+For simplicity, broker ports in the current implementation default to `:50051` and increment sequentially for additional nodes. All broker servers support graceful shutdown.
+
+## 5. Storage Layer
+Flux’s storage layer is built as a stack of progressively lower-level components, moving closer to disk as you go down: <br>
+**Broker → Partition → Log → LogSegment & IndexEntries**
+
+**Partition** <br>
+A Partition is the fundamental append-only queue in Flux (mirroring Kafka’s design). Each partition owns a single Log, which is internally split into multiple LogSegments stored on disk. Producers append to partitions; consumers fetch from them based on offsets. 
+
+**Log** <br>
+A Log represents the full, continuous record stream for a single partition.
+- Internally, it is composed of multiple ordered LogSegments, each representing a chunk of the partition’s data on disk.
+- The Log acts as a segment manager: it always writes to the active segment.
+- When the active segment reaches its configured size limit, it becomes immutable and a new segment is created.
+- Because log files are immutable once closed, this segmentation is essential for retention, cleanup, and efficient disk writes.
+
+**LogSegment** <br>
+A LogSegment is the core on-disk storage unit. Each segment:
+- Stores records sequentially (usually grouped into batches).
+- Tracks metadata such as start/end offsets, byte thresholds, current write position, and references to its log file and index file.
+- Becomes read-only once it hits its byte threshold.
+
+Log segments maintain an internal buffer of incoming writes (with a configurable byte threshold), which allows us to **batch** writes together and periodically flush to disk--ultimately reducing the number of disk writes we have to do which is crucial for performance. At the same time, we populate index entries per write which gets flushed to disk at the same time as the log segment.
+
+ **IndexEntries** <Br>
+Index entries are essentially maps containing a bunch of `message offset → byte offset` pairs on disk. These files are important for faster lookup on disk as we can lookup a message and immediately find its location in a given file via the associated byte offset which saves us from doing costly full table scans. Index writes are also buffered and flushed in sync with the corresponding segment flush, keeping the log and its index consistent.
+
+## 6. Networking (gRPC)
+Flux uses gRPC as the communication layer between producers, brokers, consumers, and controller nodes. While Apache Kafka relies on a custom high-performance TCP protocol, we opted for gRPC + Protocol Buffers as we saw implementing a custom TCP protocol to be too overkill for a personal project.
+
+**Why not REST?** <br>
+REST can work, but it comes with several downsides for a high-throughput messaging system:
+- Text-based serialization (JSON) is slower and larger than Protocol Buffers’ compact binary format.
+- HTTP/1.1 limitations (no multiplexing, higher overhead per request) introduce unnecessary latency. gRPC, built on HTTP/2, supports streaming, multiplexing, and efficient connection reuse—features.
+- As of currently we don't intend for this to be a production-ready, usable system so using gRPC allowed us to be a little more "programmatic" with our requests as that's the nature of gRPC (the network calls look like invoking functions)
+
+In short: gRPC gives us significantly better performance characteristics and a development experience that’s still approachable, without requiring us to build a full protocol ourselves.
+
+Below is a simple diagram from the earlier stages of our project that just shows the networking flow despite being a bit outdated:
+<img width="950" height="572" alt="image" src="https://github.com/user-attachments/assets/e9cf3886-a57a-45d2-8f8a-9934c9a97bd2" />
 
 
 # Internal Documentation
