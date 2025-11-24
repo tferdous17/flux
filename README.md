@@ -1,6 +1,6 @@
 # flux
 
-_Last Updated: 11/23/25_
+_Last Updated: 11/24/25_
 
 **Table of Contents**
 1. [About](#about)
@@ -14,11 +14,13 @@ _Last Updated: 11/23/25_
    6. [Broker Node](#4-broker-node)
    7. [Storage Layer](#5-storage-layer)
    8. [Networking (gRPC)](#6-networking-grpc)
+   9. [Producer Architecture](#7-producer-architecture)
+   10. [Consumer Architecture](#8-consumer-architecture)
 5. [References](#references)
 6. [Internal Documentation](#internal-documentation)
 
 # About
-flux is a heavily Kafka-inspired distributed message queue platform engineered for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
+**flux** is a (work-in-progress) heavily Kafka-inspired distributed message queue platform engineered for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
 
 > [!NOTE]
 > **Disclaimer**: this is an amateur distributed systems project so no, our code is not industry standard lol and yes there is undoubtedly room for improvement
@@ -47,19 +49,19 @@ Overview of the end-to-end architecture covering the Producer, Broker, and Consu
 
 ## Quick Terminology
 ### Producer
-- A Producer is simply a server/process/application that **sends** data into our system. An example producer can be Youtube, pushing videos/video chunks to a queue in order for it to be consumed later by a post-processing service.
+- A **Producer** is any server, process, or application that writes data into the system. For example, YouTube’s upload pipeline might push video chunks into a queue for downstream processing.
 
 ### Consumer
-- A Consumer is simply a server/process/application that **reads** data from our system (via a pull-based model). An example would be the aforementioned post-processing service (or worker nodes) which consume from the queue.
+- A **Consumer** is a server, process, or application that reads data from the system using a pull-based model. Continuing the example, a video-processing service would consume those queued chunks for encoding or analysis.
 
 ### Broker
-- The Broker is the core storage mechanism/queue that holds data. This is what producers and consumers are communicating with to send/read data, and is really a bunch of subcomponents built on top of each other.
+- A **Broker** is the core component responsible for **storing** and **serving** data. Producers write to brokers and consumers read from them. Internally, a broker is composed of multiple lower-level storage structures such as partitions, logs, and log segments.
 
 ### Partition
-- Partitions are the underlying storage mechanism of Brokers (our "queue") and are really just immutable, append-only log files. This is where data really gets produced to/consumed from. Partitions are technically made up of other subcomponents such as logs and log segments.
+- A **Partition** is the fundamental storage unit within a broker—an immutable, append-only log. Producers append messages to partitions, and consumers read from them sequentially. Each partition is itself composed of lower-level structures like log segments and index entries.
 
 ### Topic
-- Topics are just logical groupings of partitions (and by extension, messages). To continue with the earlier example, a potentional topic could be "Video Post Processing" and _only_ contains partitions related to storing videos to be consumed later by a post-processing service.
+- A **Topic** is a logical grouping of partitions (and by extension, messages). Topics organize data streams by use-case. For example, a topic named "video-post-processing" could contain all partitions related to video chunks awaiting downstream processing.
 
 
 ## High-Level Visual Overview (Simplified)
@@ -84,17 +86,18 @@ For a logical ordering, the sections will be explored in the following manner:
 8. Consumer Architecture
 
 ## 1. Cluster Architecture
-A cluster is thin layer that groups of Brokers together, and in a way serves as a single point of entry to a set of Brokers. 
+A **Cluster** is the logical layer that groups multiple brokers into a single coordinated system. It basically provides a single entry point for producers and consumers while allowing the underlying brokers to scale horizontally.
 
-In flux, we initialize a cluster programatically via a bootstrap function that takes in a set of server addresses as a paramater (ex: `"localhost:50051, localhost:50052, ..."`) and creates a new `Broker` instance per given address. By default, our system picks the first address given to us and designates the corresponding Broker hosted on that address as the active `Controller` for the cluster (more detail later).
+In Flux, clusters are initialized programmatically through a bootstrap function that accepts a list of broker addresses (e.g., `"localhost:50051, localhost:50052, ...`") and spawns a `Broker` instance for each address. By default in our system, the first address in the bootstrap list is designated as the Controller—the broker responsible for cluster-wide coordination and metadata management (explained more later). Proper Controller election may get implemented later.
 
-Starting the cluster is separate from bootstrapping it--which we also do programatically. Upon starting a cluster, we first fire up the Controller node and then have all the other brokers in this cluster asynchronously register themselves with the controller via network requests and initialize their metadata as necessary. Broker registration (and decomissioning) is necessary as this is how the controller can track the active brokers its responsible for within a cluster and can perform certain actions such as metadata propagation more easily.
+Bootstrapping the cluster and **starting** it are distinct steps. During startup, the Controller is launched first. The remaining brokers then asynchronously register themselves with the Controller via gRPC requests, during which they initialize their local metadata state. This registration (and future decommissioning) process enables the Controller to maintain an accurate view of the active brokers in the cluster and to perform coordination tasks, such as metadata propagation, efficiently.
 
 You can check out our Cluster code [here](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Cluster.java)
 
 ## 2. Controller
 The Controller broker is a specially designated broker within a cluster that acts like the "leader" of the cluster. It has the same functionality as every other broker, except it comes with additional functionality on top of it to handle special responsibilities which include:
-- Maintaining and updating cluster metadata- Propagating metadata changes to all brokers within the cluster via RPCs
+- Maintaining and updating cluster metadata
+- Propagating metadata changes to all brokers within the cluster via RPCs
 - Handling topic lifestyle (add or remove partitions + distribute them upon receiving topic requests by admin)
 - Reassigning partitions for load balancing and scalability
 - Monitor broker heartbeats/liveness
@@ -123,7 +126,7 @@ See the code [here](https://github.com/tferdous17/flux/tree/main/src/main/java/m
 ## 4. Broker Node
 Broker nodes are the primary servers that producers and consumers interact with. Each broker stores partitions (and their replicas), validates incoming writes, and serves read requests.
 
-**Controller Capability** <br>
+### Controller Capability
 A broker can optionally act as the Controller (the cluster leader). We implemented this through a shared Controller interface that every broker implements. Controller-specific behavior is gated behind an internal flag (isActiveController). When the broker is not the active controller, controller-specific functionality is simply disabled.
  ```java
    public class Broker implements Controller {
@@ -132,7 +135,7 @@ A broker can optionally act as the Controller (the cluster leader). We implement
        // ...
    }
    ```
-**General Responsibilities**<br>
+### General Responsibilities
 Write path (Producer → Broker → Storage):
 - Validates incoming messages from producers.
 - Appends messages to the underlying partitions + delegates further write handling to them.
@@ -141,7 +144,7 @@ Read path (Consumer → Broker):
 - Serves fetch requests based on the starting offset given by consumers.
 - Determines the target partition based on the request, reads from it, and returns the message back to the consumer.
 
-**Networking (gRPC)** <br>
+### Networking (gRPC)
 Each broker runs an embedded gRPC server to handle external requests. Brokers can also act as gRPC clients when sending metadata updates to the Controller node or communicating with other brokers.
 For simplicity, broker ports in the current implementation default to `:50051` and increment sequentially for additional nodes. All broker servers support graceful shutdown.
 
@@ -149,17 +152,17 @@ For simplicity, broker ports in the current implementation default to `:50051` a
 Flux’s storage layer is built as a stack of progressively lower-level components, moving closer to disk as you go down: <br>
 **Broker → Partition → Log → LogSegment & IndexEntries**
 
-**Partition** <br>
+### Partition
 A Partition is the fundamental append-only queue in Flux (mirroring Kafka’s design). Each partition owns a single Log, which is internally split into multiple LogSegments stored on disk. Producers append to partitions; consumers fetch from them based on offsets. 
 
-**Log** <br>
+### Log
 A Log represents the full, continuous record stream for a single partition.
 - Internally, it is composed of multiple ordered LogSegments, each representing a chunk of the partition’s data on disk.
 - The Log acts as a segment manager: it always writes to the active segment.
 - When the active segment reaches its configured size limit, it becomes immutable and a new segment is created.
 - Because log files are immutable once closed, this segmentation is essential for retention, cleanup, and efficient disk writes.
 
-**LogSegment** <br>
+### LogSegment
 A LogSegment is the core on-disk storage unit. Each segment:
 - Stores records sequentially (usually grouped into batches).
 - Tracks metadata such as start/end offsets, byte thresholds, current write position, and references to its log file and index file.
@@ -167,7 +170,7 @@ A LogSegment is the core on-disk storage unit. Each segment:
 
 Log segments maintain an internal buffer of incoming writes (with a configurable byte threshold), which allows us to **batch** writes together and periodically flush to disk--ultimately reducing the number of disk writes we have to do which is crucial for performance. At the same time, we populate index entries per write which gets flushed to disk at the same time as the log segment.
 
- **IndexEntries** <Br>
+### IndexEntries
 Index entries are essentially maps containing a bunch of `message offset → byte offset` pairs on disk. These files are important for faster lookup on disk as we can lookup a message and immediately find its location in a given file via the associated byte offset which saves us from doing costly full table scans. Index writes are also buffered and flushed in sync with the corresponding segment flush, keeping the log and its index consistent.
 
 ## 6. Networking (gRPC)
@@ -184,6 +187,79 @@ In short: gRPC gives us significantly better performance characteristics and a d
 Below is a simple diagram from the earlier stages of our project that just shows the networking flow despite being a bit outdated:
 <img width="950" height="572" alt="image" src="https://github.com/user-attachments/assets/e9cf3886-a57a-45d2-8f8a-9934c9a97bd2" />
 
+## 7. Producer Architecture
+As mentioned before, Producers are applications writing data to our servers. In flux, we implemented producers directly as part of the codebase rather than as standalone external clients, since Flux is not (currently) intended to be a production-ready, externally consumed system.
+
+We define a `Producer` as a simple interface, with our `FluxProducer` class providing the concrete implementation:
+```java
+public interface Producer<K, V> {
+    void send(ProducerRecord<K,V> record) throws IOException;
+    void close();
+}
+```
+where our main focus is on the `send(...)` call, which performs partition selection, serialization, batching, and finally ships the record to the broker via gRPC.
+
+### ProducerRecord
+This is a key/value pair to be sent to the broker, which consists of a topic name to which the record is being sent, an optional partition number, a timestamp, and an optional key and required value. These fields are also used to help determine a target partition for a given record, explained further below.
+
+Messages are serialized into a compact binary format using Kryo, and we attach additional metadata needed by other internal subsystems/functions before sending it to the broker. Records are only deserialized back into their original form on the consumer side when constructing consumer records.
+
+Partition selection for any given record happens **before** any data is sent to the broker. This is why the Metadata subsystem is crucial: producers must know the number of partitions for a given topic in order to correctly load-balance traffic.
+
+### Partition Selection
+We built a small utility class, [PartitionSelector](https://github.com/tferdous17/flux/blob/main/src/main/java/commons/utils/PartitionSelector.java), to encapsulate the partition-selection logic. The priority order mirrors Kafka's behavior:
+   1. If a partition # is passed in to the record already, this takes top priority.
+   2. If invalid partition number (out of range/null), attempt key-based hashing.
+   3. If above two methods didn't work, default to round-robin.
+   4. If a topic is also passed in, this just narrows down which partitions we can select for the above operations.
+
+Other than simply sending records to our broker, we also implement a buffering layer before we actually ship off our records to the broker. This buffering layer is known as the `RecordAccumulator`.
+
+### RecordAccumulator
+Before records are sent to brokers over the wire, they are buffered/staged in a `RecordAccumulator`, which batches messages and periodically drains them to the appropriate broker. Internally, the accumulator manages multiple `RecordBatch` instances, each containing many producer records. Batches have size limits, support compression (gzip, snappy, etc.), and track their own metadata.
+
+The accumulator mirrors several of Kafka’s buffering behaviors:
+- Maintaining per-topic, per-partition batch queues
+- Tracking in-flight batches on a per-partition basis
+- Draining ready batches per broker (using per-broker round-robin to ensure fairness and even load distribution)
+
+Flux supports **multiple concurrent producers**, allowing many producers to append to the same partition simultaneously while still guaranteeing sequential, ordered writes within that partition. Producers can write in parallel without compromising correctness or ordering guarantees.
+- This concurrency control is managed by our [PartitionWriteManager](https://github.com/tferdous17/flux/blob/main/src/main/java/commons/utils/PartitionWriteManager.java), which ensures thread-safe writes through a combination of Java’s `ReentrantLock` and concurrent data structures. The manager serializes writes at the **partition level** while allowing for parallelism across different partitions and producers.
+
+<img width="3836" height="1480" alt="image" src="https://github.com/user-attachments/assets/1c1b9b68-afd9-4457-b043-f7dfeb5d0bee" />
+
+## 8. Consumer Architecture
+Similar to producers, consumers are implemented directly within the Flux codebase and exposed as a simple interface:
+```java
+public interface Consumer {
+    void subscribe(Collection<String> topics);
+    void unsubscribe();
+    PollResult poll(Duration timeout);
+    void commitOffsets();
+}
+```
+Consumers do more than simply read messages— they maintain offset state, participate in consumer groups, and perform various coordination steps with the cluster.
+
+### ConsumerRecord
+A `ConsumerRecord` is the key/value pair fetched from a broker and returned to the application. It mirrors the structure of a ProducerRecord but includes an additional offset field: the logical index of the message within the partition. Offsets allow the consumer to know exactly where it left off and where to resume from on subsequent polls.
+
+### Consuming Records (Polling)
+Polling is the core mechanism for retrieving records from a broker. The poll(Duration timeout) method repeatedly issues FetchMessageRequests to brokers until either:
+- messages are returned, or
+- the poll timeout expires.
+
+Each fetch returns a Message object (an internal, intermediary representation we have), which is then converted into a `ConsumerRecord` before being returned to the consumer that is polling.
+
+Consumers always poll starting from a specific **offset**, which they maintain themselves. This offset advances as messages are consumed and can be persisted via `commitOffsets()` so that the consumer can resume correctly after restarts or failures. NOTE: The commit offsets functionality is still in the works
+
+### Consumer Groups
+Consumer groups allow multiple consumers to share the work of reading from a **subscribed topic** while ensuring each partition is consumed by **at most** one consumer at a time. This enables horizontal scaling of consumption without duplicating reads. We implement this feature in flux while replicating Kafka's original design as described below.
+
+When a consumer joins a group, it registers with the `GroupCoordinator`, which tracks active and newly joined members and performs partition assignment. Flux distributes partitions evenly across consumers (e.g., round-robin, range assignment, or sticky), and each consumer receives an explicit list of partitions it is allowed to poll.
+
+Consumers periodically heartbeat to the Controller. If a consumer fails or new members join the group, the Controller triggers a rebalance—recomputing partition ownership and redistributing partitions among the remaining consumers. During a rebalance, polling is temporarily paused to avoid conflicts.
+
+You can check out our code for implementing consumer groups [here](https://github.com/tferdous17/flux/tree/main/src/main/java/consumer) and how we actually performed the partition assignment to consumers, handling coordination, and `JoinGroup` requests from other consumers.
 
 # Internal Documentation
 
