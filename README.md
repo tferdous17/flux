@@ -1,9 +1,10 @@
 # flux
 
-_Last Updated: 11/24/25_
+_Last Updated: 11/25/25_
 
 **Table of Contents**
 1. [About](#about)
+   1. [Project Goals](#project-goals)
 2. [Contributors](#contributors)
 3. [Architecture](#architecture)
    1. [Quick Terminology](#quick-terminology)
@@ -13,27 +14,45 @@ _Last Updated: 11/24/25_
    5. [Metadata Infrastructure](#3-metadata-infrastructure)
    6. [Broker Node](#4-broker-node)
    7. [Storage Layer](#5-storage-layer)
-   8. [Networking (gRPC)](#6-networking-grpc)
-   9. [Producer Architecture](#7-producer-architecture)
-   10. [Consumer Architecture](#8-consumer-architecture)
-5. [References](#references)
-6. [Internal Documentation](#internal-documentation)
+   8. [Producer Architecture](#6-producer-architecture)
+   9. [Consumer Architecture](#7-consumer-architecture)
+   10. [Networking (gRPC)](#8-networking-grpc)
+4. [References](#references)
 
 # About
 **flux** is a (work-in-progress) heavily Kafka-inspired distributed message queue platform engineered for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
+
+## Project Goals
+- Understand core distributed systems concepts
+- Build a functional end-to-end message broker
+- Explore realistic storage internals
+- Prioritize conceptual clarity over enterprise-grade complexity
+- Learn by **building**
+
+## Non-goals
+- Be a production ready, drop-in replacement for Kafka
 
 > [!NOTE]
 > **Disclaimer**: this is an amateur distributed systems project so no, our code is not industry standard lol and yes there is undoubtedly room for improvement
 
 # Contributors
-[Tasnim Ferdous](https://github.com/tferdous17)
-- Project Lead, architected the end-to-end infrastructure for flux. Designed and implemented the Broker, controller-node infrastructure, cluster membership, and broker registration/decommissioning workflows; developed major subsystems such as metadata propagation, topic creation (+ partition-to-broker assignments for scalability), admin APIs, and initial producer infrastructure. Implemented underlying log-storage components including Partition, Log, LogSegment (immutable, append-only log file), and durable disk writes. Designed gRPC communication flows between producers, brokers, and consumers, along with record offset-management.
+[Tasnim Ferdous](https://github.com/tferdous17) (Project Lead)
+- Architected the end-to-end infrastructure for Flux, including Broker and Controller node design, cluster membership, and broker registration/decommissioning workflows.
+- Developed major subsystems for metadata propagation, topic creation, and topic partition-to-broker assignments for scalability.
+- Built admin APIs and the initial producer infrastructure.
+- Implemented the underlying log storage layer, including Partition, Log, and LogSegment (immutable, append-only files) with durable disk writes.
+- Designed gRPC communication flows between producers, brokers, and consumers, including record offset management.
 
 [Kyoshi Noda](https://github.com/KyoshiNoda)
-- Led implementation of the entire Consumer infrastructure & Consumer Group functionality including group coordination, partition-to-consumer assignments, synchronization, and liveness tracking. Additionally implemented deterministic round robin and range assignors for partition assignments. Laid the groundwork for ProducerRecords + RecordAccumulator, and implemented Kryo-based serialization for incoming producer messages.
+- Led implementation of Consumer infrastructure and Consumer Group functionality, including group coordination, partition assignment, synchronization, liveness tracking, and more.
+- Implemented deterministic round-robin and range assignors for partition assignment.
+- Built the foundations for ProducerRecords and RecordAccumulator.
+- Implemented Kryo-based serialization for producer messages.
 
 [Kevin Wijaya](https://github.com/icycoldveins)
-- Led implementation of multi-partition support, multi-producer writing to brokers (parallelized & thread-safe), broker liveness tracking, sticky assignor implementation (consumer groups), and implemented batching, compression, retry logic, and partition starvation prevention in RecordAccumulator.
+- Implemented multi-partition support and multi-producer writes to brokers (thread-safe, parallelized).
+- Developed sticky assignor for consumer groups and broker liveness tracking.
+- Enhanced RecordAccumulator with batching, compression, retry logic, and partition starvation prevention.
 
 [Christopher Maradiaga](https://github.com/maradC)
 - Built out the foundation for the Partition class and per-message metadata.
@@ -43,6 +62,7 @@ _Last Updated: 11/24/25_
 
 [Josh Obogbaimhe](https://github.com/J-Obog)
 - Contribtued mentorship and PR reviews.
+
 
 # Architecture
 Overview of the end-to-end architecture covering the Producer, Broker, and Consumer.
@@ -144,7 +164,7 @@ Read path (Consumer → Broker):
 - Serves fetch requests based on the starting offset given by consumers.
 - Determines the target partition based on the request, reads from it, and returns the message back to the consumer.
 
-### Networking (gRPC)
+### Networking
 Each broker runs an embedded gRPC server to handle external requests. Brokers can also act as gRPC clients when sending metadata updates to the Controller node or communicating with other brokers.
 For simplicity, broker ports in the current implementation default to `:50051` and increment sequentially for additional nodes. All broker servers support graceful shutdown.
 
@@ -173,21 +193,7 @@ Log segments maintain an internal buffer of incoming writes (with a configurable
 ### IndexEntries
 Index entries are essentially maps containing a bunch of `message offset → byte offset` pairs on disk. These files are important for faster lookup on disk as we can lookup a message and immediately find its location in a given file via the associated byte offset which saves us from doing costly full table scans. Index writes are also buffered and flushed in sync with the corresponding segment flush, keeping the log and its index consistent.
 
-## 6. Networking (gRPC)
-Flux uses gRPC as the communication layer between producers, brokers, consumers, and controller nodes. While Apache Kafka relies on a custom high-performance TCP protocol, we opted for gRPC + Protocol Buffers as we saw implementing a custom TCP protocol to be too overkill for a personal project.
-
-**Why not REST?** <br>
-REST can work, but it comes with several downsides for a high-throughput messaging system:
-- Text-based serialization (JSON) is slower and larger than Protocol Buffers’ compact binary format.
-- HTTP/1.1 limitations (no multiplexing, higher overhead per request) introduce unnecessary latency. gRPC, built on HTTP/2, supports streaming, multiplexing, and efficient connection reuse—features.
-- As of currently we don't intend for this to be a production-ready, usable system so using gRPC allowed us to be a little more "programmatic" with our requests as that's the nature of gRPC (the network calls look like invoking functions)
-
-In short: gRPC gives us significantly better performance characteristics and a development experience that’s still approachable, without requiring us to build a full protocol ourselves.
-
-Below is a simple diagram from the earlier stages of our project that just shows the networking flow despite being a bit outdated:
-<img width="950" height="572" alt="image" src="https://github.com/user-attachments/assets/e9cf3886-a57a-45d2-8f8a-9934c9a97bd2" />
-
-## 7. Producer Architecture
+## 6. Producer Architecture
 As mentioned before, Producers are applications writing data to our servers. In flux, we implemented producers directly as part of the codebase rather than as standalone external clients, since Flux is not (currently) intended to be a production-ready, externally consumed system.
 
 We define a `Producer` as a simple interface, with our `FluxProducer` class providing the concrete implementation:
@@ -228,7 +234,7 @@ Flux supports **multiple concurrent producers**, allowing many producers to appe
 
 <img width="3836" height="1480" alt="image" src="https://github.com/user-attachments/assets/1c1b9b68-afd9-4457-b043-f7dfeb5d0bee" />
 
-## 8. Consumer Architecture
+## 7. Consumer Architecture
 Similar to producers, consumers are implemented directly within the Flux codebase and exposed as a simple interface:
 ```java
 public interface Consumer {
@@ -252,16 +258,50 @@ Each fetch returns a Message object (an internal, intermediary representation we
 
 Consumers always poll starting from a specific **offset**, which they maintain themselves. This offset advances as messages are consumed and can be persisted via `commitOffsets()` so that the consumer can resume correctly after restarts or failures. NOTE: The commit offsets functionality is still in the works
 
+For a **simplified** view of reading from a partition, we visualized it like so (note we're abstracting some layers here):
+<img width="1500" height="640" alt="image" src="https://github.com/user-attachments/assets/b174bb60-9b1f-4ae7-b5ae-b82f081c0c81" />
+
+
 ### Consumer Groups
 Consumer groups allow multiple consumers to share the work of reading from a **subscribed topic** while ensuring each partition is consumed by **at most** one consumer at a time. This enables horizontal scaling of consumption without duplicating reads. We implement this feature in flux while replicating Kafka's original design as described below.
 
 When a consumer joins a group, it registers with the `GroupCoordinator`, which tracks active and newly joined members and performs partition assignment. Flux distributes partitions evenly across consumers (e.g., round-robin, range assignment, or sticky), and each consumer receives an explicit list of partitions it is allowed to poll.
 
-Consumers periodically heartbeat to the Controller. If a consumer fails or new members join the group, the Controller triggers a rebalance—recomputing partition ownership and redistributing partitions among the remaining consumers. During a rebalance, polling is temporarily paused to avoid conflicts.
+Consumers periodically heartbeat to the `GroupCoordinator`. If a consumer fails or new members join the group, the `GroupCoordinator` triggers a rebalance—recomputing partition ownership and redistributing partitions among the remaining consumers. During a rebalance, polling is temporarily paused to avoid conflicts.
 
 You can check out our code for implementing consumer groups [here](https://github.com/tferdous17/flux/tree/main/src/main/java/consumer) and how we actually performed the partition assignment to consumers, handling coordination, and `JoinGroup` requests from other consumers.
 
-# Internal Documentation
+## 8. Networking (gRPC)
+Flux uses gRPC as the communication layer between producers, brokers, consumers, and controller nodes. While Apache Kafka relies on a custom high-performance TCP protocol, we opted for gRPC + Protocol Buffers as we saw implementing a custom TCP protocol to be too overkill for a personal project.
+
+**Why not REST?** <br>
+REST can work, but it comes with several downsides for a high-throughput messaging system:
+- Text-based serialization (JSON) is slower and larger than Protocol Buffers’ compact binary format.
+- HTTP/1.1 limitations (no multiplexing, higher overhead per request) introduce unnecessary latency. gRPC, built on HTTP/2, supports streaming, multiplexing, and efficient connection reuse—features.
+- As of currently we don't intend for this to be a production-ready, usable system so using gRPC allowed us to be a little more "programmatic" with our requests as that's the nature of gRPC (the network calls look like invoking functions)
+
+In short: gRPC gives us significantly better performance characteristics and a development experience that’s still approachable, without requiring us to build a full protocol ourselves.
+
+Flux defines multiple gRPC [services](https://github.com/tferdous17/flux/tree/main/src/main/java/grpc/services) to support the distributed system’s functionality, including:
+- Message produce/consume
+- Metadata
+- Consumer group coordination
+- Liveness tracking
+- etc..
+
+Below is a simple diagram from the earlier stages of our project that just shows the networking flow despite being a bit outdated:
+<img width="950" height="572" alt="image" src="https://github.com/user-attachments/assets/e9cf3886-a57a-45d2-8f8a-9934c9a97bd2" />
+
+# References
+### Resources we used throughout the development process for understanding Kafka's internals and architecture
+- https://kafka.apache.org/documentation/
+- https://grpc.io/docs/languages/java/basics/
+- https://jaceklaskowski.gitbooks.io/apache-kafka/content/
+- https://www.hellointerview.com/learn/system-design/deep-dives/kafka
+- https://github.com/apache/kafka
+
+
+# INTERNAL DOCUMENTATION
 
 ## gRPC Quick Start
 The `pom.xml` file should already come with the proper dependencies, but if not please make sure to include the following:
