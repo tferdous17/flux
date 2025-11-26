@@ -1,6 +1,6 @@
 # flux
 
-_Last Updated: 11/25/25_
+_Last Updated: 11/26/25_
 
 **Table of Contents**
 1. [About](#about)
@@ -10,8 +10,8 @@ _Last Updated: 11/25/25_
    1. [Quick Terminology](#quick-terminology)
    2. [High Level Visual Overview (Simplified)](#high-level-visual-overview-simplified)
    3. [Cluster Architecture](#1-cluster-architecture)
-   4. [Controller Node](#2-controller)
-   5. [Metadata Infrastructure](#3-metadata-infrastructure)
+   4. [Metadata Infrastructure](#2-metadata-infrastructure)
+   5. [Controller Node](#3-controller)
    6. [Broker Node](#4-broker-node)
    7. [Storage Layer](#5-storage-layer)
    8. [Producer Architecture](#6-producer-architecture)
@@ -20,7 +20,7 @@ _Last Updated: 11/25/25_
 4. [References](#references)
 
 # About
-**flux** is a (work-in-progress) heavily Kafka-inspired distributed message queue platform engineered for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
+**flux** is a (work-in-progress) heavily **Kafka**-inspired distributed message queue platform we are engineering for high throughput, maximal scalability, and fault-tolerance. This project is not meant to be an exhaustive 1:1 clone of Kafka, but implements its core functionality. Built mainly for fun + educational purposes.
 
 ## Project Goals
 - Understand core distributed systems concepts
@@ -88,7 +88,7 @@ Overview of the end-to-end architecture covering the Producer, Broker, and Consu
 Here is a high level overview of how Kafka works (which flux is modeled after). This abstracts away aspects such as metadata propagation, controllers, multiple producers/consumers, multiple brokers, multiple partitions, etc, for the sake of simplicity but will get explained later.
 <img width="3758" height="1552" alt="image" src="https://github.com/user-attachments/assets/6cf430fa-ea6e-45d5-b51c-9375d476df00" />
 
-This is what flux originally started as--just a single-server model which gradually got built upon until it became fully distributed. 
+This is what flux originally started as—just a single-server model which gradually got built upon until it became fully distributed. 
 
 **The following sections dive deeper into the full architecture of the system—from the initial single-node prototype to the fully distributed design. We walk through each major component of the cluster, explain how they interact, and detail the design decisions behind metadata management, storage, networking, and client behavior.**
 
@@ -97,37 +97,24 @@ This is what flux originally started as--just a single-server model which gradua
 
 For a logical ordering, the sections will be explored in the following manner:
 1. Cluster Architecture
-2. Controller Node
-3. Metadata Infrastructure
+2. Metadata Infrastructure
+3. Controller Node
 4. Broker Node
 5. Storage Layer
-6. Networking (gRPC)
-7. Producer Architecture
-8. Consumer Architecture
+6. Producer Architecture
+7. Consumer Architecture
+8. Networking (gRPC)
 
 ## 1. Cluster Architecture
 A **Cluster** is the logical layer that groups multiple brokers into a single coordinated system. It basically provides a single entry point for producers and consumers while allowing the underlying brokers to scale horizontally.
 
 In Flux, clusters are initialized programmatically through a bootstrap function that accepts a list of broker addresses (e.g., `"localhost:50051, localhost:50052, ...`") and spawns a `Broker` instance for each address. By default in our system, the first address in the bootstrap list is designated as the Controller—the broker responsible for cluster-wide coordination and metadata management (explained more later). Proper Controller election may get implemented later.
 
-Bootstrapping the cluster and **starting** it are distinct steps. During startup, the Controller is launched first. The remaining brokers then asynchronously register themselves with the Controller via gRPC requests, during which they initialize their local metadata state. This registration (and future decommissioning) process enables the Controller to maintain an accurate view of the active brokers in the cluster and to perform coordination tasks, such as metadata propagation, efficiently.
+Bootstrapping the cluster and **starting** it are separate steps. During startup, the Controller is launched first. The remaining brokers then asynchronously register themselves with the Controller via gRPC requests, during which they initialize their local metadata state. This registration (and future decommissioning) process enables the Controller to maintain an accurate view of the active brokers in the cluster and to perform coordination tasks, such as metadata propagation, efficiently.
 
 You can check out our Cluster code [here](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Cluster.java)
 
-## 2. Controller
-The Controller broker is a specially designated broker within a cluster that acts like the "leader" of the cluster. It has the same functionality as every other broker, except it comes with additional functionality on top of it to handle special responsibilities which include:
-- Maintaining and updating cluster metadata
-- Propagating metadata changes to all brokers within the cluster via RPCs
-- Handling topic lifestyle (add or remove partitions + distribute them upon receiving topic requests by admin)
-- Reassigning partitions for load balancing and scalability
-- Monitor broker heartbeats/liveness
-- Handle broker registration (new brokers joining) and broker decommissioning (brokers gracefully shutting down)
-- ..and much more that we didn't include
-
-As of the latest update, most of the above responsibilities have been implemented in flux and you can check out the [implementations](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Broker.java), and below is a quick diagram.
-<img width="900" height="700" alt="image" src="https://github.com/user-attachments/assets/7f5b96c2-6989-415d-b948-f37184174da0" />
-
-## 3. Metadata Infrastructure
+## 2. Metadata Infrastructure
 The Metadata API is a core subsystem in flux that all major components depend on, and allows such components to periodically fetch and use the latest metadata within the system.
 
 We implemented Metadata as a singleton object that encapsulates all the logic surrounding metadata and we specifically utilized the Observer design pattern, thus allowing clients (producers/consumers) to listen (`MetadataListener`) to our `Metadata` instance and receive the latest cached snapshot of metadata immediately upon any changes detected in the metadata (which itself periodically updates in scheduled intervals).
@@ -140,8 +127,25 @@ Some important usecases of metadata include:
 - Topic metadata is necessary so we know its # of partitions and per-partition metadata
 - etc..
 
+> [!NOTE]
+> The real Kafka implements its metadata subsystem by storing cluster state—including broker membership, topic configurations, and partition assignments—in an internal, replicated **Raft-based KRaft quorum** (or historically ZooKeeper), which is basically its own log.
+
 See the code [here](https://github.com/tferdous17/flux/tree/main/src/main/java/metadata) and check out the below diagram for a visual overview.
 <img width="2954" height="984" alt="image" src="https://github.com/user-attachments/assets/15283044-2015-46a1-a039-beabecd6d774" />
+
+## 3. Controller
+The Controller broker is a specially designated broker within a cluster that acts like the "leader" of the cluster. It has the same functionality as every other broker, except it comes with additional functionality on top of it to handle special responsibilities which include:
+- Maintaining and updating cluster metadata
+- Propagating metadata changes to all brokers within the cluster via RPCs
+- Handling topic lifestyle (add or remove partitions + distribute them upon receiving topic requests by admin)
+- Reassigning partitions for load balancing and scalability
+- Monitor broker heartbeats/liveness
+- Handle broker registration (new brokers joining) and broker decommissioning (brokers gracefully shutting down)
+- ..and much more that we didn't include
+
+As of the latest update, most of the above responsibilities have been implemented in flux and you can check out the [implementations](https://github.com/tferdous17/flux/blob/main/src/main/java/server/internal/Broker.java), and below is a quick diagram.
+<img width="900" height="700" alt="image" src="https://github.com/user-attachments/assets/7f5b96c2-6989-415d-b948-f37184174da0" />
+
 
 ## 4. Broker Node
 Broker nodes are the primary servers that producers and consumers interact with. Each broker stores partitions (and their replicas), validates incoming writes, and serves read requests.
@@ -183,15 +187,15 @@ A Log represents the full, continuous record stream for a single partition.
 - Because log files are immutable once closed, this segmentation is essential for retention, cleanup, and efficient disk writes.
 
 ### LogSegment
-A LogSegment is the core on-disk storage unit. Each segment:
+A LogSegment is the core on-disk storage unit (aka the log file). Each segment:
 - Stores records sequentially (usually grouped into batches).
 - Tracks metadata such as start/end offsets, byte thresholds, current write position, and references to its log file and index file.
 - Becomes read-only once it hits its byte threshold.
 
-Log segments maintain an internal buffer of incoming writes (with a configurable byte threshold), which allows us to **batch** writes together and periodically flush to disk--ultimately reducing the number of disk writes we have to do which is crucial for performance. At the same time, we populate index entries per write which gets flushed to disk at the same time as the log segment.
+Log segments maintain an internal buffer of incoming writes (with a configurable byte threshold), which allows us to **batch** writes together and periodically flush to disk—ultimately reducing the number of disk writes we have to do which is crucial for performance. At the same time, we populate index entries per write which gets flushed to disk at the same time as the log segment.
 
 ### IndexEntries
-Index entries are essentially maps containing a bunch of `message offset → byte offset` pairs on disk. These files are important for faster lookup on disk as we can lookup a message and immediately find its location in a given file via the associated byte offset which saves us from doing costly full table scans. Index writes are also buffered and flushed in sync with the corresponding segment flush, keeping the log and its index consistent.
+Index entries is essentially a map containing a bunch of `message offset → byte offset` pairs on disk. These files are important for faster lookup on disk as we can lookup a message and immediately find its location in a given file via the associated byte offset which saves us from doing costly full table scans. Index writes are also buffered and flushed in sync with the corresponding segment flush, keeping the log and its index consistent.
 
 ## 6. Producer Architecture
 As mentioned before, Producers are applications writing data to our servers. In flux, we implemented producers directly as part of the codebase rather than as standalone external clients, since Flux is not (currently) intended to be a production-ready, externally consumed system.
@@ -208,7 +212,7 @@ where our main focus is on the `send(...)` call, which performs partition select
 ### ProducerRecord
 This is a key/value pair to be sent to the broker, which consists of a topic name to which the record is being sent, an optional partition number, a timestamp, and an optional key and required value. These fields are also used to help determine a target partition for a given record, explained further below.
 
-Messages are serialized into a compact binary format using Kryo, and we attach additional metadata needed by other internal subsystems/functions before sending it to the broker. Records are only deserialized back into their original form on the consumer side when constructing consumer records.
+Messages are serialized into a compact binary format using Kryo, and we attach additional metadata needed by other internal subsystems/functions before sending it to the broker. Records are only deserialized back into their original form on the consumer side when constructing consumer records. You may see some intermediary representations of messages passed around in our codebase in the overall write and read flows.
 
 Partition selection for any given record happens **before** any data is sent to the broker. This is why the Metadata subsystem is crucial: producers must know the number of partitions for a given topic in order to correctly load-balance traffic.
 
@@ -322,7 +326,7 @@ The `pom.xml` file should already come with the proper dependencies, but if not 
     <artifactId>grpc-stub</artifactId>
     <version>1.71.0</version>
 </dependency>
-<dependency> <!-- necessary for Java 9+ -->
+<dependency> <!— necessary for Java 9+ —>
     <groupId>org.apache.tomcat</groupId>
     <artifactId>annotations-api</artifactId>
     <version>6.0.53</version>
@@ -374,7 +378,7 @@ The mvn command will **autogenerate** all the protobuf and gRPC files you need f
  has the Window's executable named as the arm64 (mac), because there is no native arm64 support yet for some reason via Maven (very very very very very stupid thing on Maven's part)
   * In this case, you might need to switch to a Windows PC to get everything running or try homebrew's gRPC package(s).
 
----
+—-
 
 ## Mac/Apple Silicon Setup Issues & Solution
 
@@ -397,8 +401,8 @@ If you see errors like `cannot find symbol` for classes such as `Message`, `Fetc
 **How to fix:**
 1. Regenerate the Java and gRPC files manually:
    ```sh
-   protoc --java_out=target/generated-sources/protobuf/java --proto_path=src/main/proto src/main/proto/*.proto
-   protoc --grpc-java_out=target/generated-sources/protobuf/grpc-java --proto_path=src/main/proto src/main/proto/*.proto
+   protoc —java_out=target/generated-sources/protobuf/java —proto_path=src/main/proto src/main/proto/*.proto
+   protoc —grpc-java_out=target/generated-sources/protobuf/grpc-java —proto_path=src/main/proto src/main/proto/*.proto
    ```
 2. Re-run Maven:
    ```sh
